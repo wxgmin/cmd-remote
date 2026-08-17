@@ -22,6 +22,24 @@ No open ports, no cloud dependency — your PC does all the work.
 - **Same session files** as your desktop terminal: `~/.commandcode/projects/<slug>/<id>.jsonl`
 - Works over cellular/any Wi-Fi via Tailscale's encrypted mesh — zero ports exposed
 - Installable as a PWA (Add to Home Screen → fullscreen app icon)
+- **Native Android app** (WebView wrapper) — see below
+
+## Android app (APK)
+
+A small native Android app wraps the terminal so it feels like a real app, not a browser
+tab. It has a settings screen (server address + token, saved locally) and opens the full
+terminal in a WebView.
+
+- **Download:** grab the `cmd-remote-apk` artifact from the latest
+  [GitHub Actions run](https://github.com/wxgmin/cmd-remote/actions) (Actions → build →
+  Artifacts), or from a tagged release (`v*` tags attach the APK to Releases automatically).
+- **Install:** allow "Install unknown apps" for your browser/downloads app, open the APK,
+  install, then enter your PC's Tailscale URL + token on first launch.
+- **Build it yourself:** push a tag (`git tag v1.0.0 && git push origin v1.0.0`) and the
+  workflow produces the APK in CI — no Android SDK needed locally.
+
+> Note: the app uses `usesCleartextTraffic=true` so it works over plain HTTP on your
+> tailnet. If you later enable HTTPS via `tailscale cert`, that stays working too.
 
 ## Quick start
 
