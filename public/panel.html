@@ -114,6 +114,17 @@
   .msg.ok { color: var(--green); }
 
   .footer-note { color: var(--muted); font-size: 12px; text-align: center; margin-top: 24px; line-height: 1.6; }
+
+  .seg {
+    display: flex; gap: 6px; background: rgba(255,255,255,.05);
+    border: 1px solid var(--border); border-radius: 12px; padding: 4px; margin-bottom: 16px; width: fit-content;
+  }
+  .seg button {
+    border: none; background: transparent; color: var(--muted);
+    font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 9px; cursor: pointer; transition: all .12s ease;
+  }
+  .seg button.active { background: var(--grad); color: #fff; box-shadow: 0 4px 14px rgba(139,92,246,.4); }
+  .seg-note { font-size: 12px; color: var(--muted); margin-bottom: 14px; min-height: 16px; }
 </style>
 </head>
 <body>
@@ -147,12 +158,21 @@
 
   <div class="card">
     <h2><span class="ico">▦</span> Scan with your phone</h2>
+    <div class="seg" id="modeSeg">
+      <button data-mode="auto" class="active" onclick="setMode('auto')">Auto</button>
+      <button data-mode="tailscale" onclick="setMode('tailscale')">Tailscale</button>
+      <button data-mode="local" onclick="setMode('local')">Local</button>
+    </div>
+    <div class="seg-note" id="modeNote"></div>
     <div class="qr-wrap">
       <div class="qr-box"><img id="qrImg" alt="QR code"></div>
       <div class="qr-side">
-        <p>Open the camera or the Cmd Remote app on your phone and scan this QR to connect to the full terminal. It includes the token, so anyone with this image can control this PC — treat it like a password.</p>
+        <p><b>Scan with the Cmd Remote app</b> to connect instantly — it auto-fills the server and token. Or scan with your camera to open the terminal in the browser.</p>
         <div class="big-url" id="qrUrl">…</div>
-        <button class="btn" onclick="copyVal('qrUrl')">Copy phone URL</button>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn" onclick="copyVal('qrUrl')">Copy URL</button>
+          <button class="btn ghost" onclick="copyDeep()">Copy app link</button>
+        </div>
       </div>
     </div>
   </div>
@@ -180,16 +200,25 @@
 
 <script>
 let state = null;
+let currentMode = 'auto';
+let currentPayload = null;
 
 async function load() {
   try {
-    const r = await fetch('/api/panel', { headers: { Authorization: 'Bearer ' + new URLSearchParams(location.search).get('token') } });
+    const r = await fetch('/api/panel?mode=' + currentMode, { headers: { Authorization: 'Bearer ' + new URLSearchParams(location.search).get('token') } });
     if (!r.ok) throw new Error('unauthorized');
     state = await r.json();
+    currentPayload = state.best?.payload || state.modes[Object.keys(state.modes)[0]] || null;
     render();
   } catch {
     document.body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--red)">Could not load panel — check the token.</div>';
   }
+}
+
+function setMode(m) {
+  currentMode = m;
+  document.querySelectorAll('#modeSeg button').forEach((b) => b.classList.toggle('active', b.dataset.mode === m));
+  load();
 }
 
 function render() {
@@ -202,9 +231,19 @@ function render() {
 
   setVal('localUrl', local); setVal('lanUrl', lan); setVal('tsUrl', ts); setVal('dnsUrl', dns);
   setVal('tokenVal', t);
-  document.getElementById('qrImg').src = state.qr || '';
-  document.getElementById('qrUrl').textContent = state.phoneUrl || '';
   document.getElementById('workDir').textContent = state.workDir || '';
+
+  // Mode note
+  const note = document.getElementById('modeNote');
+  if (currentMode === 'auto') note.textContent = 'Auto: picks Tailscale when available, otherwise your Wi-Fi.';
+  else if (currentMode === 'tailscale') note.textContent = 'Tailscale: works from anywhere. Phone must have Tailscale on the same account.';
+  else note.textContent = 'Local: same Wi-Fi only. No Tailscale needed.';
+
+  // QR + URL from the current payload
+  if (currentPayload) {
+    document.getElementById('qrImg').src = currentPayload.qrDeep || currentPayload.qrBrowser || '';
+    document.getElementById('qrUrl').textContent = currentPayload.browserUrl || '';
+  }
 
   // Tailscale status
   const badge = document.getElementById('tsBadge');
@@ -218,6 +257,15 @@ function render() {
   } else {
     badge.textContent = 'Not connected'; badge.className = 'badge down';
     document.getElementById('tsDetail').textContent = 'Click "Open / Connect Tailscale" to start it';
+  }
+}
+
+function copyDeep() {
+  if (currentPayload) {
+    navigator.clipboard.writeText(currentPayload.deepLink).then(() => {
+      const b = event.target; const old = b.textContent; b.textContent = 'Copied!';
+      setTimeout(() => b.textContent = old, 1200);
+    });
   }
 }
 

@@ -131,8 +131,10 @@ app.get('/api/status', (req, res) => {
 });
 
 // --- Control panel data ---
+// mode: 'auto' (tailscale if up, else LAN) | 'tailscale' | 'local'
 app.get('/api/panel', async (req, res) => {
   if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
+  const mode = req.query.mode === 'tailscale' || req.query.mode === 'local' ? req.query.mode : 'auto';
   const nets = os.networkInterfaces();
   const lan = [];
   let tsIp = null;
@@ -161,22 +163,65 @@ app.get('/api/panel', async (req, res) => {
       }
     } catch {}
   }
-  const phoneUrl = `http://${tsIp || magicDNS || (lan[0] || 'localhost')}:8788/?token=${TOKEN || ''}`;
-  let qr = null;
-  try {
-    const qrcode = (await import('qrcode')).default;
-    qr = await qrcode.toDataURL(phoneUrl, { margin: 1, width: 300 });
-  } catch {}
+
+  const token = TOKEN || '';
+  // Choose the "best" host per mode.
+  let bestHost = null;
+  let bestName = null;
+  if (mode === 'tailscale') {
+    bestHost = tsIp || magicDNS;
+    bestName = 'Tailscale';
+  } else if (mode === 'local') {
+    bestHost = lan[0] || 'localhost';
+    bestName = 'LAN';
+  } else { // auto
+    bestHost = tsIp || magicDNS || lan[0] || 'localhost';
+    bestName = tsIp || magicDNS ? 'Tailscale' : 'LAN';
+  }
+
+  // Build the per-mode payloads: one for each host we can offer.
+  const hosts = [];
+  if (tsIp) hosts.push({ name: 'tailscale-ip', label: 'Anywhere (Tailscale)', host: tsIp });
+  if (magicDNS) hosts.push({ name: 'magicdns', label: 'MagicDNS', host: magicDNS });
+  for (const ip of lan) hosts.push({ name: 'lan', label: 'Home Wi-Fi (LAN)', host: ip });
+  if (!hosts.length) hosts.push({ name: 'local', label: 'On this PC', host: 'localhost' });
+
+  const qrcode = (await import('qrcode')).default;
+  const modes = {};
+  for (const h of hosts) {
+    const host = h.host;
+    const server = `http://${host}:8788`;
+    const browserUrl = `${server}/?token=${token}`;
+    const deepLink = `cmdremote://connect?server=${encodeURIComponent(server)}&token=${encodeURIComponent(token)}&mode=${encodeURIComponent(mode)}`;
+    let qrBrowser = null;
+    let qrDeep = null;
+    try {
+      qrBrowser = await qrcode.toDataURL(browserUrl, { margin: 1, width: 300 });
+      qrDeep = await qrcode.toDataURL(deepLink, { margin: 1, width: 300 });
+    } catch {}
+    modes[h.name] = {
+      label: h.label,
+      host,
+      server,
+      browserUrl,
+      deepLink,
+      qrBrowser,
+      qrDeep,
+    };
+  }
+
   res.json({
-    token: TOKEN,
+    token,
     workDir: WORK_DIR,
     ports: { chat: 8787, terminal: 8788 },
     lan,
     tailscaleIP: tsIp,
     magicDNS,
     tailscaleInstalled,
-    phoneUrl,
-    qr,
+    mode,
+    best: bestHost ? { name: bestName, host: bestHost, payload: modes[Object.keys(modes).find((k) => modes[k].host === bestHost)] || modes[Object.keys(modes)[0]] } : null,
+    modes,
+    hosts: hosts.map((h) => h.name),
   });
 });
 

@@ -35,7 +35,22 @@ public class MainActivity extends AppCompatActivity {
         String savedUrl = prefs.getString(KEY_URL, "");
         String savedToken = prefs.getString(KEY_TOKEN, "");
 
-        if (savedUrl.isEmpty()) {
+        // QR deep link: cmdremote://connect?server=...&token=...
+        String deepServer = null;
+        String deepToken = null;
+        if (getIntent() != null && getIntent().getData() != null) {
+            try {
+                deepServer = getIntent().getData().getQueryParameter("server");
+                deepToken = getIntent().getData().getQueryParameter("token");
+            } catch (Exception ignored) {}
+        }
+
+        if (deepServer != null && !deepServer.isEmpty()) {
+            // Deep link wins: save and connect immediately.
+            if (deepToken == null) deepToken = "";
+            prefs.edit().putString(KEY_URL, deepServer).putString(KEY_TOKEN, deepToken).apply();
+            openTerminal(deepServer, deepToken);
+        } else if (savedUrl.isEmpty()) {
             showSettings(savedUrl, savedToken);
         } else {
             openTerminal(savedUrl, savedToken);
