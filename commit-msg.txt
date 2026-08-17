@@ -1,0 +1,17 @@
+Desktop Control Panel + friendlier apps
+
+- New public/panel.html: local control panel showing server address
+  (Local/LAN/Tailscale/MagicDNS), access token (masked + copy),
+  QR code of the phone URL (server-generated via qrcode), Tailscale
+  status with "Open / Connect Tailscale" + "Install Tailscale"
+  buttons, "Copy all" actions. Same violet/cyan design language.
+- server.js: /panel route, /api/panel (addresses, token, QR,
+  tailscale status), /api/tailscale/up (bring tailnet up or
+  auto-install via winget)
+- panel.cmd: opens the control panel with the token from .env
+- installer.nsi: bundles panel.cmd, adds "Cmd Remote Control Panel"
+  desktop + Start Menu shortcuts (uninstaller cleans them up)
+- Android app: settings screen now guides users to the Control
+  Panel, validates URL format, requires token
+
+Co-authored-by: CommandCodeBot <noreply@commandcode.ai>

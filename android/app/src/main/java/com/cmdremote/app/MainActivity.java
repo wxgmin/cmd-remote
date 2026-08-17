@@ -55,27 +55,35 @@ public class MainActivity extends AppCompatActivity {
         TextView subtitle = new TextView(this);
         subtitle.setText("Connect to Command Code on your PC");
         subtitle.setTextSize(14);
-        subtitle.setPadding(0, 0, 0, 32);
+        subtitle.setPadding(0, 0, 0, 16);
         settingsView.addView(subtitle);
 
+        TextView hint = new TextView(this);
+        hint.setText("Where to find these on your PC:\n1. Open the \"Cmd Remote Control Panel\" shortcut on your desktop (or run panel.cmd).\n2. Copy the \"Anywhere (Tailscale)\" server address and the access token from it.\n3. Paste them below.");
+        hint.setTextSize(12);
+        hint.setTextColor(0xFF9AA3B5);
+        hint.setPadding(0, 0, 0, 28);
+        settingsView.addView(hint);
+
         TextView urlLabel = new TextView(this);
-        urlLabel.setText("PC server address (from url.cmd):");
+        urlLabel.setText("PC server address:");
         urlLabel.setTextSize(13);
         settingsView.addView(urlLabel);
 
         urlInput = new EditText(this);
-        urlInput.setHint("http://desktop-xxxx:8788");
+        urlInput.setHint("e.g. http://100.x.x.x:8788");
         urlInput.setText(currentUrl);
+        urlInput.setSingleLine(true);
         settingsView.addView(urlInput);
 
         TextView tokenLabel = new TextView(this);
-        tokenLabel.setText("Access token (from .env):");
+        tokenLabel.setText("Access token:");
         tokenLabel.setTextSize(13);
         tokenLabel.setPadding(0, 24, 0, 0);
         settingsView.addView(tokenLabel);
 
         tokenInput = new EditText(this);
-        tokenInput.setHint("your token");
+        tokenInput.setHint("32-char hex token from the control panel");
         tokenInput.setText(currentToken);
         tokenInput.setSingleLine(true);
         settingsView.addView(tokenInput);
@@ -91,7 +99,11 @@ public class MainActivity extends AppCompatActivity {
             String url = urlInput.getText().toString().trim();
             String token = tokenInput.getText().toString().trim();
             if (url.isEmpty()) {
-                statusText.setText("Enter the server address.");
+                statusText.setText("Enter the server address (e.g. http://100.124.83.109:8788).");
+                return;
+            }
+            if (token.isEmpty()) {
+                statusText.setText("Enter the access token from the control panel.");
                 return;
             }
             // Normalize: strip trailing slash, add scheme if missing.
@@ -99,6 +111,10 @@ public class MainActivity extends AppCompatActivity {
                 url = "http://" + url;
             }
             url = url.replaceAll("/+$", "");
+            if (!url.matches("^https?://[\\w\\-.]+(:\\d+)?$")) {
+                statusText.setText("That address doesn't look right. It should look like http://100.124.83.109:8788");
+                return;
+            }
             SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
             prefs.edit().putString(KEY_URL, url).putString(KEY_TOKEN, token).apply();
             openTerminal(url, token);

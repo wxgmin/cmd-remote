@@ -2,7 +2,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { createServer as createHttpsServer } from 'https';
 import { WebSocketServer, WebSocket } from 'ws';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { randomUUID } from 'crypto';
 import path from 'path';
 import fs from 'fs';
@@ -120,10 +120,88 @@ app.get('/', (req, res) => {
   if (!authOk(req)) return res.status(401).send('Unauthorized');
   res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
+app.get('/panel', (req, res) => {
+  if (!authOk(req)) return res.status(401).send('Unauthorized');
+  res.sendFile(path.join(PUBLIC_DIR, 'panel.html'));
+});
 app.use(express.static(PUBLIC_DIR, { index: false }));
 
 app.get('/api/status', (req, res) => {
   res.json({ ok: true, tokenRequired: !!TOKEN, workDir: WORK_DIR });
+});
+
+// --- Control panel data ---
+app.get('/api/panel', async (req, res) => {
+  if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
+  const nets = os.networkInterfaces();
+  const lan = [];
+  let tsIp = null;
+  for (const n of Object.keys(nets)) {
+    for (const ni of nets[n] || []) {
+      if (ni.family === 'IPv4' && !ni.internal) {
+        if (ni.address.startsWith('100.')) tsIp = ni.address;
+        else lan.push(ni.address);
+      }
+    }
+  }
+  // Tailscale magic DNS via `tailscale status --json` (best-effort)
+  let magicDNS = null;
+  let tailscaleInstalled = false;
+  const tsBin = process.platform === 'win32'
+    ? 'C:\\Program Files\\Tailscale\\tailscale.exe'
+    : '/usr/bin/tailscale';
+  tailscaleInstalled = (() => { try { return fs.existsSync(tsBin); } catch { return false; } })();
+  if (tailscaleInstalled) {
+    try {
+      const r = spawnSync(tsBin, ['status', '--json'], { encoding: 'utf8', timeout: 10000, windowsHide: true });
+      if (r.status === 0) {
+        const j = JSON.parse(r.stdout);
+        magicDNS = j.Self?.DNSName?.replace(/\.$/, '') || null;
+        if (!tsIp) tsIp = j.Self?.TailscaleIPs?.[0] || null;
+      }
+    } catch {}
+  }
+  const phoneUrl = `http://${tsIp || magicDNS || (lan[0] || 'localhost')}:8788/?token=${TOKEN || ''}`;
+  let qr = null;
+  try {
+    const qrcode = (await import('qrcode')).default;
+    qr = await qrcode.toDataURL(phoneUrl, { margin: 1, width: 300 });
+  } catch {}
+  res.json({
+    token: TOKEN,
+    workDir: WORK_DIR,
+    ports: { chat: 8787, terminal: 8788 },
+    lan,
+    tailscaleIP: tsIp,
+    magicDNS,
+    tailscaleInstalled,
+    phoneUrl,
+    qr,
+  });
+});
+
+// --- Tailscale: bring the tailnet up (best-effort) ---
+app.post('/api/tailscale/up', async (req, res) => {
+  if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
+  const tsBin = process.platform === 'win32'
+    ? 'C:\\Program Files\\Tailscale\\tailscale.exe'
+    : '/usr/bin/tailscale';
+  if (!fs.existsSync(tsBin)) {
+    // Try to install via winget (Windows)
+    if (process.platform === 'win32') {
+      const w = spawnSync('winget', ['install', '--id', 'Tailscale.Tailscale', '--accept-source-agreements', '--accept-package-agreements', '--silent'], { encoding: 'utf8', timeout: 180000, windowsHide: true });
+      if (w.status !== 0) return res.json({ ok: false, message: 'Tailscale not installed and auto-install failed. Install from https://tailscale.com/download' });
+    } else {
+      return res.json({ ok: false, message: 'Tailscale not installed. Install from https://tailscale.com/download' });
+    }
+  }
+  try {
+    const up = spawnSync(tsBin, ['up'], { encoding: 'utf8', timeout: 30000, windowsHide: true });
+    if (up.status === 0) return res.json({ ok: true, message: 'Tailscale is up' });
+    return res.json({ ok: false, message: (up.stderr || up.stdout || 'tailscale up failed').trim().slice(0, 300) });
+  } catch (e) {
+    return res.json({ ok: false, message: e.message });
+  }
 });
 
 // --- Sync: read the real Command Code session catalog ---
