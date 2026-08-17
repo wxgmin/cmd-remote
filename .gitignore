@@ -10,4 +10,7 @@ tls/
 CmdRemote-Setup-*.exe
 CmdRemote-Windows-*.exe
 CmdRemote-Android-*.apk
+
+# Locally-built desktop app (CI compiles from app/CmdRemoteApp.cs)
+CmdRemoteApp.exe
 commit-msg.txt  
