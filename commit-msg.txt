@@ -1,0 +1,16 @@
+Modern Gen-Z UI redesign + new logo + installer prereq install
+
+- New logo: violet->cyan gradient tile with terminal chevron,
+  applied to favicon, icon.svg, PWA icons (192/512), Windows .ico,
+  Android launcher (adaptive icon + foreground)
+- Chat UI redesign: glassy dark theme, ambient gradient blobs,
+  gradient accents, modern buttons/status pill, rounded cards,
+  animated message entry, "Conversations" + "Terminal sessions
+  synced" sidebar sections
+- TTY UI redesign: matching dark theme, gradient logo, modern
+  header/status, violet terminal cursor
+- Installer: custom icon, reliable Node.js detection
+  (IfFileExists + where), auto-installs Node via winget when
+  missing, Tailscale presence tip, ships icon.ico
+
+Co-authored-by: CommandCodeBot <noreply@commandcode.ai>

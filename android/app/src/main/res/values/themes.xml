@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.CmdRemote" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="android:statusBarColor">#0f1115</item>
-        <item name="android:navigationBarColor">#0f1115</item>
-        <item name="android:windowBackground">#0f1115</item>
+        <item name="android:statusBarColor">#0b0d12</item>
+        <item name="android:navigationBarColor">#0b0d12</item>
+        <item name="android:windowBackground">#0b0d12</item>
+        <item name="colorPrimary">#8b5cf6</item>
+        <item name="colorPrimaryVariant">#06b6d4</item>
+        <item name="colorSecondary">#06b6d4</item>
     </style>
 </resources>

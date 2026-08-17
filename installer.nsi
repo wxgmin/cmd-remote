@@ -20,7 +20,8 @@ SetCompressor /SOLID lzma
 
 ; ---------- Modern UI ----------
 !define MUI_ABORTWARNING
-!define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
+!define MUI_ICON "icon.ico"
+!define MUI_UNICON "icon.ico"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
@@ -60,25 +61,37 @@ Section "Install"
   SetOutPath "$INSTDIR\scripts"
   File "scripts\make-icons.mjs"
 
+  ; App icon
+  File "icon.ico"
+
+  ; ---------- Tailscale pre-check (warn only) ----------
+  IfFileExists "C:\Program Files\Tailscale\tailscale.exe" tailscale_ok
+  MessageBox MB_OK|MB_ICONINFORMATION "Tip: install Tailscale (https://tailscale.com/download) to access Cmd Remote from anywhere. Without it, the phone must be on the same Wi-Fi. Setup will continue either way."
+  tailscale_ok:
+
   ; ---------- Node.js check / install ----------
-  ClearErrors
-  FindFirst $0 $1 "$PROGRAMFILES64\nodejs\node.exe"
-  IfErrors 0 node_found
-  FindFirst $0 $1 "$PROGRAMFILES32\nodejs\node.exe"
-  IfErrors 0 node_found
-  FindFirst $0 $1 "$LOCALAPPDATA\Programs\nodejs\node.exe"
-  IfErrors 0 node_found
+  IfFileExists "$PROGRAMFILES64\nodejs\node.exe" node_found
+  IfFileExists "$PROGRAMFILES32\nodejs\node.exe" node_found
+  IfFileExists "$LOCALAPPDATA\Programs\nodejs\node.exe" node_found
+  ; Also check PATH (via where) for portable installs
+  nsExec::ExecToStack 'where node'
+  Pop $0
+  Pop $1
+  StrCmp $0 0 node_found
 
   ; Node not found - try winget (best effort, then tell user)
-  MessageBox MB_YESNO|MB_ICONEXCLAMATION "Node.js was not found. Cmd Remote needs Node.js 18+.$\n$\nInstall Node.js now (downloads from nodejs.org)?$\n(If you already installed it, choose No and restart this installer.)" IDYES install_node IDNO node_missing
+  MessageBox MB_YESNO|MB_ICONEXCLAMATION "Node.js was not found. Cmd Remote needs Node.js 18+.$\n$\nInstall Node.js now (downloads from nodejs.org via winget)?$\n(If you already installed it, choose No and restart this installer.)" IDYES install_node IDNO node_missing
   install_node:
-    ExecWait '"$SYSDIR\winget.exe" install --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements --silent'
-    ClearErrors
-    FindFirst $0 $1 "$PROGRAMFILES64\nodejs\node.exe"
-    IfErrors node_still_missing node_found
-    FindFirst $0 $1 "$LOCALAPPDATA\Programs\nodejs\node.exe"
-    IfErrors node_still_missing node_found
-    Goto node_found
+    nsExec::ExecToStack '"$SYSDIR\winget.exe" install --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements --silent'
+    Pop $0
+    ; Re-check after install
+    IfFileExists "$PROGRAMFILES64\nodejs\node.exe" node_found
+    IfFileExists "$LOCALAPPDATA\Programs\nodejs\node.exe" node_found
+    nsExec::ExecToStack 'where node'
+    Pop $0
+    Pop $1
+    StrCmp $0 0 node_found
+    Goto node_still_missing
 
   node_missing:
   node_still_missing:
