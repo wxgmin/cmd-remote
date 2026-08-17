@@ -248,6 +248,32 @@
   #send:disabled { opacity: .5; transform: none; }
 
   .hint { font-size: 11px; color: var(--muted); text-align: center; padding: 6px 16px 10px; }
+  /* Mobile keyboard controls (coarse pointer only) */
+  #kbControls {
+    display: none;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  #kbControls button {
+    width: 44px; height: 44px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,.06);
+    color: var(--text);
+    border-radius: 13px;
+    font-size: 17px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #kbControls button.latched {
+    background: var(--grad);
+    border-color: transparent;
+    box-shadow: 0 6px 22px rgba(139, 92, 246, 0.4);
+  }
+  @media (pointer: coarse) {
+    #kbControls { display: flex; }
+  }
   /* Jump-to-latest pill, shown while user is scrolled up */
   #jumpLatest {
     position: absolute;
@@ -372,6 +398,10 @@
   <div id="palette"></div>
   <button id="jumpLatest" title="Jump to latest">↓ Latest</button>
   <footer>
+    <div id="kbControls">
+      <button id="kbBtn" title="Show / hide keyboard">⌨</button>
+      <button id="kbLock" title="Lock keyboard: never auto-open">🔒</button>
+    </div>
     <textarea id="input" rows="1" placeholder="Message your agent…"></textarea>
     <button id="send" title="Send"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 12 L20 4 L14 20 L11 13 Z" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></button>
     <button id="stop" title="Stop"><svg width="16" height="16" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3" fill="#fff"/></svg></button>
@@ -388,6 +418,8 @@
   const login = $('login'), tokenInput = $('tokenInput'), loginBtn = $('loginBtn'), loginErr = $('loginErr');
   const palette = $('palette');
   const jumpLatest = $('jumpLatest');
+  const kbBtn = $('kbBtn'), kbLockBtn = $('kbLock');
+  let kbLock = false;
 
   let stickToBottom = true; // false once the user scrolls up; true when they return to the bottom
 
@@ -576,7 +608,7 @@
     messagesEl.innerHTML = '';
     renderSessionList();
     closeSidebarOnMobile();
-    inputEl.focus();
+    // No inputEl.focus() — auto-focusing pops the soft keyboard on mobile.
   }
 
   // --- Messages ---
@@ -590,6 +622,8 @@
     const nearBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 40;
     stickToBottom = nearBottom;
     jumpLatest.style.display = nearBottom ? 'none' : 'flex';
+    // Scrolling shouldn't keep the soft keyboard open on mobile.
+    if (document.activeElement === inputEl) inputEl.blur();
   }
   function addMsg(text, cls) {
     const el = document.createElement('div');
@@ -717,6 +751,30 @@
       palette.appendChild(item);
     }
   }
+
+  // --- Mobile keyboard control ---
+  function setKbUI() {
+    kbBtn.classList.toggle('latched', document.activeElement === inputEl);
+    kbBtn.textContent = document.activeElement === inputEl ? '⌨ on' : '⌨';
+    kbLockBtn.classList.toggle('latched', kbLock);
+    kbLockBtn.textContent = kbLock ? '🔒 on' : '🔒';
+  }
+  kbBtn.addEventListener('click', () => {
+    if (kbLock) return;
+    if (document.activeElement === inputEl) {
+      inputEl.blur();
+    } else {
+      inputEl.focus();
+    }
+    setKbUI();
+  });
+  kbLockBtn.addEventListener('click', () => {
+    kbLock = !kbLock;
+    if (kbLock) inputEl.blur(); // hide the keyboard immediately when locking
+    setKbUI();
+  });
+  inputEl.addEventListener('focus', setKbUI);
+  inputEl.addEventListener('blur', setKbUI);
 
   // --- Events ---
   stopBtn.onclick = () => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' })); };

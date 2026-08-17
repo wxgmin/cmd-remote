@@ -163,6 +163,9 @@
   <button id="kRight" title="Arrow right">→</button>
   <span class="sep"></span>
   <button id="kEnter" title="Enter">↵</button>
+  <span class="sep"></span>
+  <button id="kbBtn" title="Show / hide keyboard">⌨</button>
+  <button id="kbLock" title="Lock keyboard: never auto-open">🔒</button>
 </div>
 <button id="scrollHint" title="Jump to latest output">↓</button>
 <div class="hint">Full terminal. Tap to focus, swipe to scroll, Ctrl shortcuts via the toolbar or keyboard.</div>
@@ -190,6 +193,11 @@
   term.loadAddon(fit);
   term.open(termEl);
   fit.fit();
+
+  // Start at the bottom (latest output) by default.
+  requestAnimationFrame(() => {
+    if (viewport) viewport.scrollTop = viewport.scrollHeight;
+  });
 
   // --- Scrolling: native touch scroll (xterm's viewport handles momentum on
   // touch), auto-stick to the bottom while output streams, free scroll-up.
@@ -219,7 +227,8 @@
   // --- Toolbar: arrows / Esc / Tab / Ctrl send real PTY input ---
   function sendKeys(seq) {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: seq }));
-    term.focus();
+    // NOTE: no term.focus() here — focusing xterm's textarea on Android
+    // forces the soft keyboard open. Toolbar keys work without the keyboard.
   }
   const KEYS = {
     kUp: '\x1b[A', kDown: '\x1b[B', kRight: '\x1b[C', kLeft: '\x1b[D',
@@ -259,6 +268,46 @@
     });
   }
 
+  // --- Keyboard control: it only opens on an explicit ⌨ tap; the lock
+  // prevents it from ever auto-opening (scroll, tap, output, arrows). ---
+  const kbBtn = document.getElementById('kbBtn');
+  const kbLockBtn = document.getElementById('kbLock');
+  let keyboardOpen = false;
+  let kbLock = false;
+  function setKbUI() {
+    kbBtn.classList.toggle('latched', keyboardOpen);
+    kbBtn.textContent = keyboardOpen ? '⌨ on' : '⌨';
+    kbLockBtn.classList.toggle('latched', kbLock);
+    kbLockBtn.textContent = kbLock ? '🔒 on' : '🔒';
+  }
+  function focusTerminal(preventScroll) {
+    // Focus xterm without letting Android pop the keyboard (blur() first
+    // keeps the IME from re-attaching to the hidden textarea).
+    try { term.blur(); } catch {}
+    term.focus({ preventScroll: !!preventScroll });
+  }
+  kbBtn.addEventListener('click', () => {
+    if (kbLock) return; // locked: must unlock first
+    keyboardOpen = !keyboardOpen;
+    if (keyboardOpen) {
+      focusTerminal(false);
+    } else {
+      try { term.blur(); } catch {}
+      try { document.activeElement && document.activeElement.blur(); } catch {}
+    }
+    setKbUI();
+  });
+  kbLockBtn.addEventListener('click', () => {
+    kbLock = !kbLock;
+    if (kbLock) {
+      // Locking hides the keyboard immediately.
+      keyboardOpen = false;
+      try { term.blur(); } catch {}
+      try { document.activeElement && document.activeElement.blur(); } catch {}
+    }
+    setKbUI();
+  });
+
   let ws = null;
   let reconnectTimer = null;
   let reconnectDelay = 1000;
@@ -274,6 +323,9 @@
       setStatus('on');
       reconnectDelay = 1000;
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      // New session: start at the latest output, not the top.
+      stickToBottom = true;
+      scrollToLatest();
     };
     ws.onclose = () => {
       setStatus('off', 'disconnected. Tap to reconnect');
@@ -314,8 +366,9 @@
     refreshScrollHint();
   });
 
-  // Tap to focus + show keyboard on mobile. Only treat a tap (no movement) as
-  // a focus tap so swiping to scroll never pops the keyboard.
+  // Tap to focus WITHOUT popping the keyboard on mobile (a real tap only
+  // moves focus to xterm; the IME stays closed until ⌨ is tapped). Swipes
+  // to scroll never focus at all. If locked, taps never focus either.
   let tapStart = null;
   termEl.addEventListener('touchstart', (e) => {
     tapStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -325,9 +378,13 @@
     const dx = e.changedTouches[0].clientX - tapStart.x;
     const dy = e.changedTouches[0].clientY - tapStart.y;
     tapStart = null;
-    if (Math.hypot(dx, dy) < 10) term.focus();
+    if (Math.hypot(dx, dy) < 10) {
+      if (!kbLock) focusTerminal(true);
+    }
   }, { passive: true });
-  termEl.addEventListener('click', () => term.focus());
+  termEl.addEventListener('click', () => {
+    if (!kbLock) focusTerminal(true);
+  });
 
   // Keep following new output only while the user is at the bottom.
   const origWrite = term.write.bind(term);
