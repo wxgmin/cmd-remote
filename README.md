@@ -49,6 +49,12 @@ installed and logged in on your PC.
 ```bat
 git clone https://github.com/<you>/cmd-remote.git
 cd cmd-remote
+npm run setup     REM one-command setup: deps, Tailscale, token, firewall, servers, URLs
+```
+
+Or the manual path:
+
+```bat
 install.bat      REM installs deps, generates a token, sets up HTTPS if possible
 start.bat        REM starts both servers, prints your phone URLs
 ```
@@ -61,6 +67,38 @@ http://<your-pc-magicdns-name>:8787/?token=<your-token>    ← chat UI
 ```
 
 Run `url.cmd` on the PC any time to print all URLs (local / LAN / Tailscale).
+
+## Give it to a friend (one-command setup)
+
+Everything is designed so a friend (or another machine with Command Code) can point at
+this repo and be running in minutes. The repo ships an `AGENTS.md` that any Command Code
+instance reads automatically.
+
+**What the friend does:**
+
+1. Make sure [Node.js 18+](https://nodejs.org) is installed.
+2. Tell their Command Code: *"Set up https://github.com/wxgmin/cmd-remote"* — it clones,
+   runs `npm run setup`, and walks through anything interactive (Tailscale login).
+3. Or manually: `git clone ... && cd cmd-remote && npm run setup`.
+
+**What `npm run setup` handles automatically:**
+
+- Installs dependencies
+- Finds or **auto-installs Tailscale** (winget / brew / install script) and prompts for
+  login if needed (`tailscale up` opens the browser)
+- Brings up the tailnet and reads the machine's MagicDNS name
+- Generates a **per-machine token** into `.env` (never overwrites an existing one)
+- Fetches a Tailscale HTTPS cert when the plan allows (free plan degrades gracefully)
+- Adds the Windows Firewall rule (UAC prompt), creates a desktop shortcut
+- Starts both servers detached
+- Prints the exact phone URLs (Local / LAN / Anywhere / MagicDNS)
+
+**Phone side:** install the Android APK from
+[GitHub Releases](https://github.com/wxgmin/cmd-remote/releases) (asset `app-debug.apk`),
+open it, enter the PC's URL + token from the setup summary. Done.
+
+> Both machines must be on the same Tailscale tailnet (same account, or the friend is
+> added to yours) for anywhere-access. On the same Wi-Fi, no Tailscale needed at all.
 
 ## Configuration (`.env`)
 
