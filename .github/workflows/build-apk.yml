@@ -64,7 +64,7 @@ jobs:
       - name: Install NSIS
         shell: pwsh
         run: |
-          winget install --id NSIS.NSIS --accept-source-agreements --accept-package-agreements --silent
+          winget install --id NSIS.NSIS --source winget --accept-source-agreements --accept-package-agreements --accept-msstore-agreements --silent
           echo "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Build NSIS installer
