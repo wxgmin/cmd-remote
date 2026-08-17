@@ -3,7 +3,7 @@ import { createServer } from 'http';
 import { createServer as createHttpsServer } from 'https';
 import { WebSocketServer, WebSocket } from 'ws';
 import { spawn, spawnSync } from 'child_process';
-import { randomUUID } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -83,11 +83,20 @@ function buildContext(messages) {
 }
 
 // --- Auth ---
+function safeEqual(a, b) {
+  try {
+    const ba = Buffer.from(a);
+    const bb = Buffer.from(b);
+    if (ba.length !== bb.length) return false;
+    return timingSafeEqual(ba, bb);
+  } catch { return false; }
+}
 function authOk(req) {
   if (!TOKEN) return true;
   const header = req.headers['authorization'] || '';
   const urlToken = new URL(req.url, 'http://x').searchParams.get('token');
-  return header === `Bearer ${TOKEN}` || urlToken === TOKEN;
+  const fromHeader = header.startsWith('Bearer ') ? header.slice(7) : '';
+  return (fromHeader && safeEqual(fromHeader, TOKEN)) || (urlToken && safeEqual(urlToken, TOKEN));
 }
 
 // --- CLI helpers ---
@@ -290,6 +299,8 @@ app.get('/api/sync/sessions', (req, res) => {
 app.get('/api/sync/session/:id', (req, res) => {
   if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
   const id = req.params.id;
+  // Validate id is a plain session id (UUID) — prevents path traversal.
+  if (!/^[0-9a-f-]{8,64}$/i.test(id)) return res.status(400).json({ error: 'invalid session id' });
   let filePath = null;
   try {
     for (const dir of fs.readdirSync(PROJECTS_DIR)) {
@@ -333,13 +344,32 @@ app.get('/api/sync/session/:id', (req, res) => {
 });
 
 // --- Management: run CLI subcommands and return output ---
-const SAFE_CLI = ['mcp', 'skills', 'mods', 'taste', 'info', 'status', 'whoami', '--list-models', '--version'];
+// Read-only whitelist: the first arg must be a safe subcommand AND the rest of
+// the args must be read-only variants (no add/remove/delete/install/auth/etc).
+const SAFE_CLI = {
+  mcp: ['list', 'get'],
+  skills: ['list'],
+  mods: ['list'],
+  taste: ['list'],
+  info: [],
+  status: [],
+  whoami: [],
+  '--list-models': [],
+  '--version': [],
+};
 app.post('/api/cli', async (req, res) => {
   if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
   const { args } = req.body || {};
   if (!Array.isArray(args) || !args.length) return res.status(400).json({ error: 'args required' });
-  if (!SAFE_CLI.includes(args[0])) {
+  const allowed = SAFE_CLI[args[0]];
+  if (!allowed) {
     return res.status(403).json({ error: `subcommand not allowed: ${args[0]}` });
+  }
+  // Only allow the read-only sub-args listed; anything else is rejected.
+  const rest = args.slice(1);
+  const restOk = rest.every((a) => allowed.includes(a) || a.startsWith('--'));
+  if (!restOk) {
+    return res.status(403).json({ error: `arguments not allowed: ${rest.join(' ')}` });
   }
   const result = await runCli(args);
   res.json({ code: result.code, output: stripAnsi(result.out), error: stripAnsi(result.err) });
@@ -453,10 +483,12 @@ const SLASH_COMMANDS = {
   model: {
     desc: 'Set model for this conversation (e.g. /model deepseek/deepseek-v4-pro)',
     run: async (p, c) => {
-      if (!p.trim()) return c.error('Usage: /model <id> — see /models for the list');
-      c.conv.settings.model = p.trim();
+      const id = p.trim();
+      if (!id) return c.error('Usage: /model <id> — see /models for the list');
+      if (!/^[\w./:@-]{1,80}$/.test(id)) return c.error('Invalid model id.');
+      c.conv.settings.model = id;
       saveHistory();
-      c.delta(`Model set to ${p.trim()} for this conversation.`);
+      c.delta(`Model set to ${id} for this conversation.`);
       c.done(0);
     },
   },
@@ -527,6 +559,7 @@ const SLASH_COMMANDS = {
     run: (p, c) => {
       const id = p.trim();
       if (!id) return c.error('Usage: /resume <session-id>');
+      if (!/^[0-9a-f-]{8,64}$/i.test(id)) return c.error('Invalid session id.');
       c.conv.settings.resumeSession = id;
       c.conv.settings.sessionType = 'terminal';
       saveHistory();

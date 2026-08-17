@@ -3,7 +3,7 @@ import { createServer } from 'http';
 import { createServer as createHttpsServer } from 'https';
 import { WebSocketServer, WebSocket } from 'ws';
 import pty from 'node-pty';
-import { randomUUID } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -33,17 +33,32 @@ function resolveCmdEntry() {
   return 'cmd';
 }
 
+function safeEqual(a, b) {
+  try {
+    const ba = Buffer.from(a);
+    const bb = Buffer.from(b);
+    if (ba.length !== bb.length) return false;
+    return timingSafeEqual(ba, bb);
+  } catch { return false; }
+}
 function authOk(req) {
   if (!TOKEN) return true;
   const header = req.headers['authorization'] || '';
   const urlToken = new URL(req.url, 'http://x').searchParams.get('token');
-  return header === `Bearer ${TOKEN}` || urlToken === TOKEN;
+  const fromHeader = header.startsWith('Bearer ') ? header.slice(7) : '';
+  return (fromHeader && safeEqual(fromHeader, TOKEN)) || (urlToken && safeEqual(urlToken, TOKEN));
 }
 
 const app = express();
 app.get('/', (req, res) => {
   if (!authOk(req)) return res.status(401).send('Unauthorized');
   res.sendFile(path.join(__dirname, 'public', 'tty.html'));
+});
+// Only static *assets* are public (xterm.js/css, icons, manifest). The HTML
+// pages carry no secrets, but gate them anyway to avoid serving them unauthenticated.
+app.get(['/index.html', '/panel.html', '/tty.html'], (req, res) => {
+  if (!authOk(req)) return res.status(401).send('Unauthorized');
+  res.sendFile(path.join(__dirname, 'public', path.basename(req.path)));
 });
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
