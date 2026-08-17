@@ -649,7 +649,9 @@ function handleChat(clientId, msg) {
     const arg = rest.join(' ');
     const slash = SLASH_COMMANDS[cmd.toLowerCase()];
     if (!slash) {
+      const conv = getOrCreateConv(msg.sessionId || randomUUID());
       send(clientId, { type: 'error', message: `Unknown command /${cmd}. Type /help for the list.` });
+      send(clientId, { type: 'run_end', sessionId: conv.id, exitCode: 1 });
       return;
     }
     const conv = getOrCreateConv(msg.sessionId || randomUUID());
