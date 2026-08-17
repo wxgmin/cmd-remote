@@ -31,7 +31,7 @@ if exist "C:\Program Files\Tailscale\tailscale.exe" (
 
 REM --- Install dependencies ---
 echo.
-echo [1/4] Installing dependencies...
+echo [1/5] Installing dependencies...
 call npm install
 if errorlevel 1 (
   echo [ERROR] npm install failed.
@@ -42,7 +42,7 @@ echo [OK] Dependencies installed.
 
 REM --- Create .env with a fresh random token ---
 echo.
-echo [2/4] Generating access token...
+echo [2/5] Generating access token...
 if not exist .env (
   for /f "delims=" %%t in ('node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"') do set TOKEN=%%t
   (
@@ -57,7 +57,7 @@ if not exist .env (
 
 REM --- Fetch Tailscale TLS cert (enables HTTPS + installable app) ---
 echo.
-echo [3/4] Setting up HTTPS via Tailscale (optional)...
+echo [3/5] Setting up HTTPS via Tailscale (optional)...
 if exist "C:\Program Files\Tailscale\tailscale.exe" (
   node tls-setup.mjs
   if errorlevel 1 (
@@ -71,7 +71,7 @@ if exist "C:\Program Files\Tailscale\tailscale.exe" (
 
 REM --- Firewall (optional, admin) ---
 echo.
-echo [4/4] Checking Windows Firewall...
+echo [4/5] Checking Windows Firewall...
 netsh advfirewall firewall show rule name="cmd-remote" >nul 2>&1
 if errorlevel 1 (
   echo Adding firewall rule for ports 8787/8788 (may ask for admin)...

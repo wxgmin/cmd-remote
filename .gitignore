@@ -7,5 +7,4 @@ node_modules/
 tls/
 
 # Generated icon artifacts stay, but keep the generator script
-commit-msg.txt  
-commit-msg.txt  
+commit-msg.txt
