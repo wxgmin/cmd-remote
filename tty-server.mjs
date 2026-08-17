@@ -71,42 +71,114 @@ if (tls) {
   server = createServer(app);
 }
 const wss = new WebSocketServer({ server, path: '/ws' });
-const sessions = new Map();
+// Sessions survive socket disconnects: the PTY keeps running in the
+// background and buffers output so a reconnecting client can reattach.
+const sessions = new Map(); // id -> { id, proc, ws, buffer, lastActive }
+
+function replayBuffer(s, ws) {
+  if (!s.buffer) return;
+  // Chunk so a large replay doesn't block the socket.
+  const chunk = 8192;
+  for (let i = 0; i < s.buffer.length; i += chunk) {
+    const part = s.buffer.slice(i, i + chunk);
+    ws.send(JSON.stringify({ type: 'output', data: part }));
+  }
+}
 
 wss.on('connection', (ws, req) => {
   if (!authOk(req)) {
     ws.close(4001, 'Unauthorized');
     return;
   }
+  const url = new URL(req.url, 'http://x');
+  const wanted = url.searchParams.get('session') || '';
   const id = randomUUID();
-  const proc = pty.spawn(process.execPath, [CMD_ENTRY], {
-    name: 'xterm-256color',
-    cols: 100,
-    rows: 30,
-    cwd: WORK_DIR,
-    env: { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1' },
-  });
-  sessions.set(id, { ws, proc });
+  let s = wanted && sessions.get(wanted);
+
+  if (s && s.proc && !s.proc.exitCode) {
+    // Reattach to an existing background PTY.
+    s.ws = ws;
+    s.lastActive = Date.now();
+    ws.send(JSON.stringify({ type: 'hello', session: s.id, replay: true }));
+    replayBuffer(s, ws);
+    // Let the client know the current size so it can send a resize.
+    ws.send(JSON.stringify({ type: 'size', cols: s.cols, rows: s.rows }));
+  } else {
+    // New independent PTY (or stale session id -> fresh one).
+    const proc = pty.spawn(process.execPath, [CMD_ENTRY], {
+      name: 'xterm-256color',
+      cols: 100,
+      rows: 30,
+      cwd: WORK_DIR,
+      env: { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1' },
+    });
+    s = { id, proc, ws, buffer: '', cols: 100, rows: 30, createdAt: Date.now(), lastActive: Date.now() };
+    sessions.set(id, s);
+    ws.send(JSON.stringify({ type: 'hello', session: id, replay: false }));
+    ws.send(JSON.stringify({ type: 'size', cols: s.cols, rows: s.rows }));
+    proc.onData((data) => {
+      s.buffer = (s.buffer + data).slice(-262144); // keep last 256 KB
+      if (s.ws && s.ws.readyState === WebSocket.OPEN) {
+        s.ws.send(JSON.stringify({ type: 'output', data }));
+      }
+    });
+    proc.onExit(() => {
+      sessions.delete(s.id);
+      if (s.ws && s.ws.readyState === WebSocket.OPEN) {
+        s.ws.send(JSON.stringify({ type: 'exit' }));
+      }
+    });
+  }
+
   ws.on('message', (data) => {
     try {
       const msg = JSON.parse(data.toString());
-      if (msg.type === 'input') proc.write(msg.data);
-      else if (msg.type === 'resize') proc.resize(msg.cols, msg.rows);
+      if (msg.type === 'input') {
+        if (s.proc) s.proc.write(msg.data);
+      } else if (msg.type === 'resize') {
+        if (s.proc) s.proc.resize(msg.cols, msg.rows);
+        s.cols = msg.cols; s.rows = msg.rows;
+      } else if (msg.type === 'end') {
+        // Tab closed: kill this session only.
+        try { s.proc.kill(); } catch {}
+        sessions.delete(s.id);
+        if (s.ws && s.ws.readyState === WebSocket.OPEN) s.ws.close();
+      }
     } catch {
-      try { proc.write(data.toString()); } catch {}
+      try { if (s.proc) s.proc.write(data.toString()); } catch {}
     }
   });
   ws.on('close', () => {
-    try { proc.kill(); } catch {}
-    sessions.delete(id);
+    // Detach, do NOT kill — the PTY keeps running in the background.
+    if (s && s.ws === ws) s.ws = null;
+    if (s) s.lastActive = Date.now();
   });
-  proc.onData((data) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'output', data }));
-  });
-  proc.onExit(() => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'exit' }));
-    sessions.delete(id);
-  });
+});
+
+// Tab reconciliation: list live background sessions (auth-gated).
+app.get('/api/tty/sessions', (req, res) => {
+  if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
+  const list = [];
+  for (const s of sessions.values()) {
+    if (s.proc && !s.proc.exitCode) {
+      list.push({ id: s.id, createdAt: s.createdAt || null, lastActive: s.lastActive || Date.now() });
+    }
+  }
+  res.json({ sessions: list });
+});
+
+// End a session (tab closed) — works for attached AND background sessions.
+app.post('/api/tty/sessions/:id/end', (req, res) => {
+  if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
+  const id = req.params.id;
+  if (!/^[0-9a-f-]{8,64}$/i.test(id)) return res.status(400).json({ error: 'invalid session id' });
+  const s = sessions.get(id);
+  if (s) {
+    try { s.proc.kill(); } catch {}
+    sessions.delete(s.id);
+    if (s.ws && s.ws.readyState === WebSocket.OPEN) s.ws.close();
+  }
+  res.json({ ok: true });
 });
 
 process.on('uncaughtException', (e) => console.error('Uncaught:', e));

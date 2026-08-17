@@ -419,7 +419,9 @@
   const palette = $('palette');
   const jumpLatest = $('jumpLatest');
   const kbBtn = $('kbBtn'), kbLockBtn = $('kbLock');
+  // Persistent lock: survives reloads and app restarts.
   let kbLock = false;
+  try { kbLock = localStorage.getItem('chat_kb_lock') === '1'; } catch {}
 
   let stickToBottom = true; // false once the user scrolls up; true when they return to the bottom
 
@@ -432,6 +434,18 @@
   let history = [];
   let syncSessions = [];
   let paletteOpen = false;
+  let wasBusy = false; // run was in flight when the socket dropped
+
+  // Persist the last conversation so a full app restart can reattach to an
+  // in-flight run or reopen the same conversation.
+  function persistSession() {
+    try {
+      if (currentSessionId) localStorage.setItem('cmd_remote_last_session', currentSessionId);
+    } catch {}
+  }
+  function restoreSession() {
+    try { return localStorage.getItem('cmd_remote_last_session') || null; } catch { return null; }
+  }
 
   let userEnteredToken = false;
   function token() {
@@ -468,10 +482,20 @@
   function connect() {
     clearTimeout(reconnectTimer);
     ws = new WebSocket(wsUrl());
-    ws.onopen = () => { setStatus('on'); };
+    ws.onopen = () => {
+      setStatus('on');
+      // Reattach to any in-flight run for the current conversation.
+      const sid = currentSessionId || restoreSession();
+      if (sid) {
+        currentSessionId = sid;
+        ws.send(JSON.stringify({ type: 'attach', sessionId: sid }));
+      }
+    };
     ws.onclose = () => {
       setStatus('off');
-      if (busy) finishRun();
+      wasBusy = busy;
+      // Don't finishRun() here — the run continues on the server; we'll
+      // reattach (and get run_end) when the socket comes back.
       reconnectTimer = setTimeout(connect, 3000);
     };
     ws.onerror = () => ws.close();
@@ -531,10 +555,12 @@
   }
 
   async function openConversation(id) {
-    if (busy) return;
+    // No busy gate: switching conversations is like switching browser tabs —
+    // the other conversation's run (if any) keeps going and we attach to it.
     const conv = await loadConversation(id);
     if (!conv) return;
     currentSessionId = conv.id;
+    persistSession();
     chatTitle.textContent = conv.title || 'Conversation';
     messagesEl.innerHTML = '';
     for (const m of conv.messages) {
@@ -544,6 +570,10 @@
     }
     renderSessionList();
     closeSidebarOnMobile();
+    // Attach to an in-flight run for this conversation (replays missed output).
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'attach', sessionId: currentSessionId }));
+    }
   }
 
   // --- Terminal session sync ---
@@ -640,6 +670,9 @@
     switch (msg.type) {
       case 'run_start':
         busy = true;
+        wasBusy = false;
+        if (msg.sessionId) currentSessionId = msg.sessionId;
+        persistSession();
         sendBtn.disabled = true;
         stopBtn.style.display = 'flex';
         break;
@@ -657,7 +690,10 @@
         if (!currentAssistantEl) addMsg(msg.text, 'thinking');
         break;
       case 'run_end':
-        if (msg.sessionId) currentSessionId = msg.sessionId;
+        if (msg.sessionId) {
+          currentSessionId = msg.sessionId;
+          persistSession();
+        }
         finishRun();
         loadSessions();
         loadSyncSessions();
@@ -745,7 +781,7 @@
       item.appendChild(d);
       item.onclick = () => {
         inputEl.value = cmd;
-        inputEl.focus();
+        if (!kbLock) inputEl.focus(); // lock prevents the keyboard from popping
         hidePalette();
       };
       palette.appendChild(item);
@@ -770,6 +806,7 @@
   });
   kbLockBtn.addEventListener('click', () => {
     kbLock = !kbLock;
+    try { localStorage.setItem('chat_kb_lock', kbLock ? '1' : '0'); } catch {}
     if (kbLock) inputEl.blur(); // hide the keyboard immediately when locking
     setKbUI();
   });
@@ -777,7 +814,7 @@
   inputEl.addEventListener('blur', setKbUI);
 
   // --- Events ---
-  stopBtn.onclick = () => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' })); };
+  stopBtn.onclick = () => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop', sessionId: currentSessionId })); };
   sendBtn.onclick = send;
   $('newChatBtn').onclick = newChat;
   inputEl.addEventListener('keydown', (e) => {

@@ -482,6 +482,15 @@ if (tls) {
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 const clients = new Map();
+// Runs survive socket disconnects: an in-flight agent run keeps going on the
+// PC, buffers its output, and a reconnecting client can attach to replay it.
+const runs = new Map(); // conversation sessionId -> { child, buffer, stderrTail, wsRef, interrupted, done, exitCode }
+
+function runSend(run, obj) {
+  if (run.wsRef && run.wsRef.readyState === WebSocket.OPEN) {
+    run.wsRef.send(JSON.stringify(obj));
+  }
+}
 
 wss.on('connection', (ws, req) => {
   if (!authOk(req)) {
@@ -489,7 +498,7 @@ wss.on('connection', (ws, req) => {
     return;
   }
   const clientId = randomUUID();
-  clients.set(clientId, { ws, sessionId: null, child: null, interrupted: false });
+  clients.set(clientId, { ws, sessionId: null });
   ws.on('message', (data) => {
     let msg;
     try {
@@ -504,10 +513,40 @@ wss.on('connection', (ws, req) => {
         send(clientId, { type: 'error', message: `Server error: ${err.message}` });
       }
     } else if (msg.type === 'stop') {
-      killClientChild(clientId);
+      // Stop the run for the conversation this client is viewing.
+      const sid = msg.sessionId || clients.get(clientId)?.sessionId;
+      if (sid) killRun(sid);
+    } else if (msg.type === 'attach') {
+      const sid = msg.sessionId;
+      if (!sid) return;
+      const client = clients.get(clientId);
+      if (client) client.sessionId = sid;
+      const run = runs.get(sid);
+      if (!run) {
+        send(clientId, { type: 'run_end', sessionId: sid, exitCode: null, detached: true });
+        return;
+      }
+      // Replay buffered output for this run so the view catches up.
+      run.wsRef = ws;
+      if (!run.done) {
+        send(clientId, { type: 'run_start', sessionId: sid });
+        for (const t of run.buffer) send(clientId, { type: t.type, text: t.text, name: t.name, description: t.description });
+        if (run.stderrTail) send(clientId, { type: 'stderr', text: run.stderrTail });
+      } else {
+        send(clientId, { type: 'run_end', sessionId: sid, exitCode: run.exitCode, interrupted: run.interrupted });
+      }
     }
   });
-  ws.on('close', () => stopClient(clientId));
+  ws.on('close', () => {
+    // Detach — do NOT kill the run; it keeps going and buffers output.
+    const client = clients.get(clientId);
+    if (client) {
+      const sid = client.sessionId;
+      const run = sid && runs.get(sid);
+      if (run && run.wsRef === ws) run.wsRef = null;
+    }
+    clients.delete(clientId);
+  });
 });
 
 function send(clientId, obj) {
@@ -699,8 +738,9 @@ const SLASH_COMMANDS = {
 function handleChat(clientId, msg) {
   const client = clients.get(clientId);
   if (!client) return;
-  if (client.child) {
-    send(clientId, { type: 'error', message: 'An agent run is already in progress.' });
+  const sessionId = msg.sessionId || null;
+  if (sessionId && runs.get(sessionId) && !runs.get(sessionId).done) {
+    send(clientId, { type: 'error', message: 'A run is already in progress for this conversation.' });
     return;
   }
   const query = String(msg.text || '').trim();
@@ -734,7 +774,6 @@ function handleChat(clientId, msg) {
     return;
   }
 
-  const sessionId = msg.sessionId || randomUUID();
   const conv = getOrCreateConv(sessionId);
   conv.messages.push({ role: 'user', content: query, ts: new Date().toISOString() });
   conv.updatedAt = new Date().toISOString();
@@ -776,17 +815,17 @@ function handleChat(clientId, msg) {
     env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
     windowsHide: true,
   });
-  client.child = child;
+  const run = { child, buffer: [], stderrTail: '', wsRef: client.ws, interrupted: false, done: false, exitCode: null };
+  runs.set(sessionId, run);
 
   let assistantText = '';
-  let stderrTail = '';
-  let buffer = '';
+  let lineBuffer = '';
   child.stdout.on('data', (chunk) => {
-    buffer += chunk.toString();
+    lineBuffer += chunk.toString();
     let idx;
-    while ((idx = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, idx).trim();
-      buffer = buffer.slice(idx + 1);
+    while ((idx = lineBuffer.indexOf('\n')) >= 0) {
+      const line = lineBuffer.slice(0, idx).trim();
+      lineBuffer = lineBuffer.slice(idx + 1);
       if (!line) continue;
       let parsed;
       try {
@@ -799,9 +838,11 @@ function handleChat(clientId, msg) {
         if (!ev) continue;
         if (ev.type === 'text_delta') {
           assistantText += ev.delta || '';
-          send(clientId, { type: 'delta', text: ev.delta || '' });
+          run.buffer.push({ type: 'delta', text: ev.delta || '' });
+          runSend(run, { type: 'delta', text: ev.delta || '' });
         } else if (ev.type === 'tool_running') {
-          send(clientId, { type: 'tool', name: ev.toolName, description: ev.description || '' });
+          run.buffer.push({ type: 'tool', name: ev.toolName, description: ev.description || '' });
+          runSend(run, { type: 'tool', name: ev.toolName, description: ev.description || '' });
         }
       }
     }
@@ -810,29 +851,32 @@ function handleChat(clientId, msg) {
   child.stderr.on('data', (chunk) => {
     const text = chunk.toString();
     if (text.trim()) {
-      stderrTail = (stderrTail + text).slice(-2000);
-      send(clientId, { type: 'stderr', text: text.trim() });
+      run.stderrTail = (run.stderrTail + text).slice(-2000);
+      runSend(run, { type: 'stderr', text: text.trim() });
     }
   });
 
   child.on('error', (err) => {
-    send(clientId, { type: 'error', message: `Failed to start Command Code: ${err.message}` });
-    client.child = null;
+    runSend(run, { type: 'error', message: `Failed to start Command Code: ${err.message}` });
+    run.done = true;
+    run.exitCode = 1;
+    run.wsRef = null;
   });
 
   child.on('close', (code) => {
-    client.child = null;
-    const interrupted = !!client.interrupted;
-    client.interrupted = false;
+    run.done = true;
+    run.exitCode = code;
+    const interrupted = !!run.interrupted;
     const trimmed = assistantText.trim();
     if (!interrupted && trimmed) {
       conv.messages.push({ role: 'assistant', content: trimmed, ts: new Date().toISOString() });
-    } else if (!interrupted && stderrTail.trim()) {
-      conv.messages.push({ role: 'error', content: stderrTail.trim().slice(-500), ts: new Date().toISOString() });
+    } else if (!interrupted && run.stderrTail.trim()) {
+      conv.messages.push({ role: 'error', content: run.stderrTail.trim().slice(-500), ts: new Date().toISOString() });
     }
     conv.updatedAt = new Date().toISOString();
     saveHistory();
-    send(clientId, { type: 'run_end', sessionId, exitCode: code, interrupted });
+    runSend(run, { type: 'run_end', sessionId, exitCode: code, interrupted });
+    run.wsRef = null;
   });
 }
 
@@ -847,19 +891,13 @@ function killTree(child) {
   }
 }
 
-function killClientChild(clientId) {
-  const client = clients.get(clientId);
-  if (!client) return;
-  if (client.child) {
-    client.interrupted = true;
-    killTree(client.child);
-    client.child = null;
-  }
-}
-
-function stopClient(clientId) {
-  killClientChild(clientId);
-  clients.delete(clientId);
+function killRun(sessionId) {
+  const run = runs.get(sessionId);
+  if (!run) return;
+  run.interrupted = true;
+  killTree(run.child);
+  run.child = null;
+  // The close handler finalizes (done=true, run_end broadcast).
 }
 
 process.on('uncaughtException', (err) => {

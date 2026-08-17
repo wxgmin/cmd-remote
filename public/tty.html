@@ -78,6 +78,64 @@
   .xterm { height: 100%; }
   /* Thin scrollbar for the terminal viewport (desktop + mobile) */
   .xterm .xterm-viewport { scrollbar-width: thin; }
+  /* Tab bar */
+  #tabbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    flex-shrink: 0;
+    scrollbar-width: thin;
+  }
+  .tab {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: rgba(255,255,255,.04);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tab.active {
+    background: linear-gradient(135deg, rgba(139,92,246,.25), rgba(6,182,212,.15));
+    border-color: rgba(139,92,246,.4);
+    color: var(--text);
+  }
+  .tab .x {
+    width: 18px; height: 18px;
+    border: none; background: none;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1;
+    border-radius: 5px;
+    cursor: pointer;
+    padding: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .tab .x:active { background: rgba(255,255,255,.12); color: var(--error); }
+  #tabAdd {
+    flex-shrink: 0;
+    width: 30px; height: 30px;
+    border: 1px dashed var(--border);
+    border-radius: 9px;
+    background: none;
+    color: var(--muted);
+    font-size: 17px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #tabAdd:active { background: rgba(255,255,255,.08); color: var(--text); }
   /* Mobile toolbar */
   #toolbar {
     display: none;
@@ -151,6 +209,7 @@
   <h1>Command Code Terminal</h1>
   <div class="status"><span class="dot" id="dot"></span><span id="statusText">connecting</span></div>
 </header>
+<div id="tabbar" aria-label="Terminal tabs"></div>
 <div id="term"></div>
 <div id="toolbar" aria-label="Terminal keys">
   <button id="kCtrl" title="Hold Ctrl for shortcuts (Ctrl+C, Ctrl+D…)">Ctrl</button>
@@ -180,7 +239,6 @@
   const scrollHint = document.getElementById('scrollHint');
   const token = new URLSearchParams(location.search).get('token');
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const url = `${proto}://${location.host}/ws` + (token ? `?token=${encodeURIComponent(token)}` : '');
 
   const term = new Terminal({
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -269,11 +327,13 @@
   }
 
   // --- Keyboard control: it only opens on an explicit ⌨ tap; the lock
-  // prevents it from ever auto-opening (scroll, tap, output, arrows). ---
+  // prevents it from ever auto-opening (scroll, tap, output, arrows).
+  // The lock is PERSISTENT: it survives reloads and app restarts.
   const kbBtn = document.getElementById('kbBtn');
   const kbLockBtn = document.getElementById('kbLock');
   let keyboardOpen = false;
   let kbLock = false;
+  try { kbLock = localStorage.getItem('tty_kb_lock') === '1'; } catch {}
   function setKbUI() {
     kbBtn.classList.toggle('latched', keyboardOpen);
     kbBtn.textContent = keyboardOpen ? '⌨ on' : '⌨';
@@ -299,6 +359,7 @@
   });
   kbLockBtn.addEventListener('click', () => {
     kbLock = !kbLock;
+    try { localStorage.setItem('tty_kb_lock', kbLock ? '1' : '0'); } catch {}
     if (kbLock) {
       // Locking hides the keyboard immediately.
       keyboardOpen = false;
@@ -311,39 +372,173 @@
   let ws = null;
   let reconnectTimer = null;
   let reconnectDelay = 1000;
+  let currentTab = null; // { id, session, label }
+  let tabs = []; // { id, session, label }
+  const LS_TABS = 'tty_tabs_v1';
+  const LS_PREFIX = 'tty_session_';
+
   function setStatus(state, text) {
     dot.className = 'dot ' + state;
     statusText.textContent = text || (state === 'on' ? 'connected' : state === 'off' ? 'disconnected' : 'connecting');
   }
+
+  function saveTabs() {
+    try { localStorage.setItem(LS_TABS, JSON.stringify(tabs)); } catch {}
+  }
+  function loadTabs() {
+    try { return JSON.parse(localStorage.getItem(LS_TABS)) || []; } catch { return []; }
+  }
+  function tabLabel(i) { return 'Terminal ' + (i + 1); }
+
+  function renderTabs() {
+    const bar = document.getElementById('tabbar');
+    bar.innerHTML = '';
+    tabs.forEach((t, i) => {
+      const el = document.createElement('div');
+      el.className = 'tab' + (t.id === currentTab.id ? ' active' : '');
+      const lbl = document.createElement('span');
+      lbl.textContent = t.label || tabLabel(i);
+      const x = document.createElement('button');
+      x.className = 'x';
+      x.textContent = '×';
+      x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(t.id); });
+      el.appendChild(lbl);
+      el.appendChild(x);
+      el.addEventListener('click', () => switchTab(t.id));
+      bar.appendChild(el);
+    });
+    const add = document.createElement('button');
+    add.id = 'tabAdd';
+    add.textContent = '+';
+    add.title = 'New terminal tab';
+    add.addEventListener('click', () => addTab());
+    bar.appendChild(add);
+  }
+
+  function addTab() {
+    const t = { id: 'tab' + Date.now() + Math.random().toString(36).slice(2, 6), session: null, label: tabLabel(tabs.length) };
+    tabs.push(t);
+    saveTabs();
+    switchTab(t.id, true);
+  }
+
+  function switchTab(tabId, forceNew) {
+    const t = tabs.find((x) => x.id === tabId);
+    if (!t) return;
+    currentTab = t;
+    saveTabs();
+    renderTabs();
+    // Detach current socket (session keeps running on the server).
+    if (ws) { try { ws.close(); } catch {} ws = null; }
+    clearTimeout(reconnectTimer);
+    term.reset();
+    stickToBottom = true;
+    scrollToLatest();
+    connect();
+  }
+
+  async function closeTab(tabId) {
+    const t = tabs.find((x) => x.id === tabId);
+    if (!t) return;
+    if (!confirm('Close ' + (t.label || 'this terminal') + '? Its session will be terminated.')) return;
+    if (t.session) {
+      try {
+        await fetch('/api/tty/sessions/' + t.session + '/end', { method: 'POST', headers: authHeaders() });
+      } catch {}
+    }
+    tabs = tabs.filter((x) => x.id !== tabId);
+    try { localStorage.removeItem(LS_PREFIX + tabId); } catch {}
+    if (currentTab.id === tabId) {
+      if (tabs.length) {
+        currentTab = tabs[0];
+        renderTabs();
+        if (ws) { try { ws.close(); } catch {} ws = null; }
+        term.reset();
+        stickToBottom = true;
+        scrollToLatest();
+        connect();
+      } else {
+        currentTab = null;
+        renderTabs();
+        setStatus('off', 'No tabs. Tap + to create one.');
+      }
+    } else {
+      saveTabs();
+      renderTabs();
+    }
+  }
+
+  function authHeaders() {
+    const t = token;
+    return t ? { 'Authorization': 'Bearer ' + t } : {};
+  }
+
   function connect() {
     clearTimeout(reconnectTimer);
+    if (!currentTab) { setStatus('off', 'No tabs. Tap + to create one.'); return; }
     setStatus('', 'connecting');
+    const base = `${proto}://${location.host}/ws` + (token ? `?token=${encodeURIComponent(token)}` : '');
+    const url = currentTab.session ? `${base}&session=${encodeURIComponent(currentTab.session)}` : base;
     ws = new WebSocket(url);
     ws.onopen = () => {
       setStatus('on');
       reconnectDelay = 1000;
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      // New session: start at the latest output, not the top.
       stickToBottom = true;
       scrollToLatest();
     };
     ws.onclose = () => {
+      // If this tab was closed while connecting, don't reconnect to it.
+      if (!tabs.find((x) => x.id === currentTab.id)) return;
       setStatus('off', 'disconnected. Tap to reconnect');
-      // Auto-reconnect with backoff (phone backgrounding kills sockets).
       reconnectTimer = setTimeout(connect, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, 15000);
     };
     ws.onerror = () => ws.close();
     ws.onmessage = (e) => {
       let msg; try { msg = JSON.parse(e.data); } catch { return; }
-      if (msg.type === 'output') term.write(msg.data);
-      else if (msg.type === 'exit') { setStatus('off', 'session ended. Tap to restart'); term.write('\r\n[process exited]\r\n'); clearTimeout(reconnectTimer); }
+      if (msg.type === 'hello') {
+        // Reconcile: server may have assigned a fresh id (server restarted).
+        currentTab.session = msg.session;
+        saveTabs();
+        if (msg.replay) term.reset();
+      } else if (msg.type === 'output') term.write(msg.data);
+      else if (msg.type === 'size') {
+        try { term.resize(msg.cols, msg.rows); } catch {}
+      } else if (msg.type === 'exit') {
+        setStatus('off', 'session ended');
+        term.write('\r\n[process exited]\r\n');
+        currentTab.session = null;
+        saveTabs();
+      }
     };
   }
   // Tap the header/status to reconnect immediately.
   document.querySelector('header').addEventListener('click', () => {
     if (!ws || ws.readyState !== WebSocket.OPEN) { clearTimeout(reconnectTimer); connect(); }
   });
+
+  // --- Tab reconciliation on load: restore live sessions, drop dead ones ---
+  (async function bootTabs() {
+    const saved = loadTabs();
+    let live = [];
+    try {
+      const r = await fetch('/api/tty/sessions', { headers: authHeaders() });
+      if (r.ok) {
+        const j = await r.json();
+        live = (j.sessions || []).map((s) => s.id);
+      }
+    } catch {}
+    tabs = saved.filter((t) => t.session && live.includes(t.session));
+    if (!tabs.length) {
+      // Nothing to restore: fresh single tab.
+      tabs = [{ id: 'tab' + Date.now(), session: null, label: 'Terminal 1' }];
+      saveTabs();
+    }
+    currentTab = tabs[0];
+    renderTabs();
+    connect();
+  })();
 
   term.onData((data) => {
     // A latched/hold Ctrl also applies to the next character typed on the
@@ -393,7 +588,7 @@
     if (stickToBottom) scrollToLatest();
   };
 
-  connect();
+  // Tab boot (async) handles the initial connect.
 })();
 
 if ('serviceWorker' in navigator) {
