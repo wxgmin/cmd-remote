@@ -5,6 +5,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 const TS = 'C:\\Program Files\\Tailscale\\tailscale.exe';
 const certDir = path.join(os.homedir(), '.cmd-remote', 'tls');
@@ -28,9 +29,9 @@ if (!host) {
 console.log(`Fetching TLS cert for ${host} ...`);
 
 try {
-  execFileSync(TS, ['cert', host], { cwd: certDir, stdio: 'inherit' });
+  execFileSync(TS, ['cert', host], { cwd: certDir, stdio: ['ignore', 'inherit', 'pipe'], encoding: 'utf8' });
 } catch (e) {
-  const msg = (e.message || '').toString();
+  const msg = ((e.message || '') + (e.stderr || '')).toString();
   if (msg.includes('does not support getting TLS certs') || msg.includes('500')) {
     console.error('');
     console.error('Your Tailscale plan does not include TLS certs (free plan limitation).');
@@ -49,4 +50,20 @@ try {
 
 console.log(`Cert saved: ${path.join(certDir, host + '.crt')}`);
 console.log(`Key saved:  ${path.join(certDir, host + '.key')}`);
-console.log(`Set TAILSCALE_HOST=${host} in .env (already done automatically) to enable HTTPS.`);
+
+// Write TAILSCALE_HOST into .env so the servers pick up HTTPS.
+const envFile = path.join(path.dirname(fileURLToPath(import.meta.url)), '.env');
+try {
+  let env = '';
+  try { env = fs.readFileSync(envFile, 'utf8'); } catch {}
+  if (!/^TAILSCALE_HOST=/m.test(env)) {
+    env += (env.endsWith('\n') ? '' : '\n') + `TAILSCALE_HOST=${host}\n`;
+    fs.writeFileSync(envFile, env);
+    console.log('TAILSCALE_HOST written to .env');
+  } else {
+    console.log('TAILSCALE_HOST already set in .env');
+  }
+} catch (e) {
+  console.warn('Could not write TAILSCALE_HOST to .env:', e.message);
+}
+console.log('HTTPS enabled. Restart the servers to pick it up.');
