@@ -44,11 +44,13 @@ REM --- Create .env with a fresh random token ---
 echo.
 echo [2/5] Generating access token...
 if not exist .env (
-  for /f "delims=" %%t in ('node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"') do set TOKEN=%%t
+  node -e "require('fs').writeFileSync(process.env.TEMP + '\\cmd-token.txt', require('crypto').randomBytes(16).toString('hex'))"
+  set /p TOKEN=<%TEMP%\cmd-token.txt
   (
     echo # cmd-remote configuration
     echo CMD_REMOTE_TOKEN=!TOKEN!
   ) > .env
+  del "%TEMP%\cmd-token.txt" 2>nul
   echo [OK] Token generated and saved to .env
   echo   Your phone URL will include this token - treat it like a password.
 ) else (

@@ -13,4 +13,7 @@ CmdRemote-Android-*.apk
 
 # Locally-built desktop app (CI compiles from app/CmdRemoteApp.cs)
 CmdRemoteApp.exe
+
+# Generated verification output
+verify-results.txt
 commit-msg.txt  

@@ -434,7 +434,6 @@
   let history = [];
   let syncSessions = [];
   let paletteOpen = false;
-  let wasBusy = false; // run was in flight when the socket dropped
 
   // Persist the last conversation so a full app restart can reattach to an
   // in-flight run or reopen the same conversation.
@@ -493,7 +492,6 @@
     };
     ws.onclose = () => {
       setStatus('off');
-      wasBusy = busy;
       // Don't finishRun() here — the run continues on the server; we'll
       // reattach (and get run_end) when the socket comes back.
       reconnectTimer = setTimeout(connect, 3000);
@@ -670,7 +668,6 @@
     switch (msg.type) {
       case 'run_start':
         busy = true;
-        wasBusy = false;
         if (msg.sessionId) currentSessionId = msg.sessionId;
         persistSession();
         sendBtn.disabled = true;

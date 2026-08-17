@@ -9,7 +9,7 @@ import fs from 'fs';
 import os from 'os';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
-import { tailscaleIP, tailscaleTLS } from './lib/util.mjs';
+import { tailscaleIP, tailscaleTLS, lanIPs } from './lib/util.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -860,7 +860,9 @@ function handleChat(clientId, msg) {
     runSend(run, { type: 'error', message: `Failed to start Command Code: ${err.message}` });
     run.done = true;
     run.exitCode = 1;
+    runSend(run, { type: 'run_end', sessionId, exitCode: 1, interrupted: false });
     run.wsRef = null;
+    setTimeout(() => runs.delete(sessionId), 60000);
   });
 
   child.on('close', (code) => {
@@ -877,6 +879,9 @@ function handleChat(clientId, msg) {
     saveHistory();
     runSend(run, { type: 'run_end', sessionId, exitCode: code, interrupted });
     run.wsRef = null;
+    // Keep the run briefly so a reconnecting client can attach and learn it
+    // finished, then drop it to avoid unbounded memory growth.
+    setTimeout(() => runs.delete(sessionId), 60000);
   });
 }
 

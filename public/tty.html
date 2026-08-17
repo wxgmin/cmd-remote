@@ -395,7 +395,8 @@
     bar.innerHTML = '';
     tabs.forEach((t, i) => {
       const el = document.createElement('div');
-      el.className = 'tab' + (t.id === currentTab.id ? ' active' : '');
+      const active = currentTab && t.id === currentTab.id;
+      el.className = 'tab' + (active ? ' active' : '');
       const lbl = document.createElement('span');
       lbl.textContent = t.label || tabLabel(i);
       const x = document.createElement('button');
@@ -479,23 +480,27 @@
     setStatus('', 'connecting');
     const base = `${proto}://${location.host}/ws` + (token ? `?token=${encodeURIComponent(token)}` : '');
     const url = currentTab.session ? `${base}&session=${encodeURIComponent(currentTab.session)}` : base;
-    ws = new WebSocket(url);
-    ws.onopen = () => {
+    const sock = new WebSocket(url);
+    ws = sock;
+    sock.onopen = () => {
+      if (sock !== ws) return; // stale socket (tab switched)
       setStatus('on');
       reconnectDelay = 1000;
-      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      sock.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       stickToBottom = true;
       scrollToLatest();
     };
-    ws.onclose = () => {
+    sock.onclose = () => {
+      if (sock !== ws) return; // stale socket
       // If this tab was closed while connecting, don't reconnect to it.
       if (!tabs.find((x) => x.id === currentTab.id)) return;
       setStatus('off', 'disconnected. Tap to reconnect');
       reconnectTimer = setTimeout(connect, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, 15000);
     };
-    ws.onerror = () => ws.close();
-    ws.onmessage = (e) => {
+    sock.onerror = () => sock.close();
+    sock.onmessage = (e) => {
+      if (sock !== ws) return; // stale socket
       let msg; try { msg = JSON.parse(e.data); } catch { return; }
       if (msg.type === 'hello') {
         // Reconcile: server may have assigned a fresh id (server restarted).

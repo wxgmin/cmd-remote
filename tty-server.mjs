@@ -95,7 +95,7 @@ wss.on('connection', (ws, req) => {
   const id = randomUUID();
   let s = wanted && sessions.get(wanted);
 
-  if (s && s.proc && !s.proc.exitCode) {
+  if (s && s.proc && !s.exited) {
     // Reattach to an existing background PTY.
     s.ws = ws;
     s.lastActive = Date.now();
@@ -112,7 +112,7 @@ wss.on('connection', (ws, req) => {
       cwd: WORK_DIR,
       env: { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1' },
     });
-    s = { id, proc, ws, buffer: '', cols: 100, rows: 30, createdAt: Date.now(), lastActive: Date.now() };
+    s = { id, proc, ws, buffer: '', cols: 100, rows: 30, createdAt: Date.now(), lastActive: Date.now(), exited: false };
     sessions.set(id, s);
     ws.send(JSON.stringify({ type: 'hello', session: id, replay: false }));
     ws.send(JSON.stringify({ type: 'size', cols: s.cols, rows: s.rows }));
@@ -123,6 +123,7 @@ wss.on('connection', (ws, req) => {
       }
     });
     proc.onExit(() => {
+      s.exited = true;
       sessions.delete(s.id);
       if (s.ws && s.ws.readyState === WebSocket.OPEN) {
         s.ws.send(JSON.stringify({ type: 'exit' }));
@@ -160,7 +161,7 @@ app.get('/api/tty/sessions', (req, res) => {
   if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
   const list = [];
   for (const s of sessions.values()) {
-    if (s.proc && !s.proc.exitCode) {
+    if (s.proc && !s.exited) {
       list.push({ id: s.id, createdAt: s.createdAt || null, lastActive: s.lastActive || Date.now() });
     }
   }

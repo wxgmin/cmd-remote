@@ -121,7 +121,7 @@ instance reads automatically.
 - Prints the exact phone URLs (Local / LAN / Anywhere / MagicDNS)
 
 **Phone side:** install the Android APK from
-[GitHub Releases](https://github.com/wxgmin/cmd-remote/releases) (asset `app-debug.apk`),
+[GitHub Releases](https://github.com/wxgmin/cmd-remote/releases) (asset `CmdRemote-Android-<ver>.apk`),
 open it, enter the PC's URL + token from the setup summary. Done.
 
 > Both machines must be on the same Tailscale tailnet (same account, or the friend is
