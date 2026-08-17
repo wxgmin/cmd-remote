@@ -8,6 +8,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Net;
+using System.Text;
 using System.Windows.Forms;
 
 namespace CmdRemoteApp
@@ -65,15 +66,15 @@ namespace CmdRemoteApp
             home.BackColor = Bg;
             var hp = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(28, 20, 28, 20) };
             hp.RowCount = 6;
-            hp.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));   // status
-            hp.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));   // detail
-            hp.RowStyles.Add(new RowStyle(SizeType.Absolute, 260));  // QR
-            hp.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));   // url
-            hp.RowStyles.Add(new RowStyle(SizeType.Absolute, 16));   // spacer
-            hp.RowStyles.Add(new RowStyle(SizeType.Percent, 100));   // help
+            hp.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));   // status
+            hp.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));   // detail
+            hp.RowStyles.Add(new RowStyle(SizeType.Percent, 100));   // QR (grows with window)
+            hp.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));   // url
+            hp.RowStyles.Add(new RowStyle(SizeType.Absolute, 14));   // spacer
+            hp.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));  // help
 
             statusLabel = new Label { Text = "Starting...", Font = new Font("Segoe UI", 15F, FontStyle.Bold), ForeColor = Fg, AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
-            detailLabel = new Label { Text = "", Font = new Font("Segoe UI", 10.5F), ForeColor = Muted, AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
+            detailLabel = new Label { Text = "", Font = new Font("Segoe UI", 10.5F), ForeColor = Muted, AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true };
 
             qrBox = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Panel, BorderStyle = BorderStyle.FixedSingle };
             qrBox.Paint += (s, e) =>
@@ -85,7 +86,7 @@ namespace CmdRemoteApp
                 }
             };
 
-            phoneUrlLabel = new Label { Text = "Loading...", Font = new Font("Consolas", 10F), ForeColor = Fg, AutoSize = false, Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, BackColor = Panel, Padding = new Padding(10), TextAlign = ContentAlignment.MiddleLeft };
+            phoneUrlLabel = new Label { Text = "Loading...", Font = new Font("Consolas", 10F), ForeColor = Fg, AutoSize = false, Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, BackColor = Panel, Padding = new Padding(10), TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true };
 
             var helpLabel = new Label
             {
@@ -275,6 +276,8 @@ namespace CmdRemoteApp
         }
 
         // ---- QR ----
+        // The server nests the chosen connection under "best": 
+        //   { best: { host, payload: { browserUrl, qrBrowser, ... } }, tailscaleIP, lan, ... }
         private void RefreshQr()
         {
             try
@@ -286,29 +289,48 @@ namespace CmdRemoteApp
                 using (var sr = new StreamReader(resp.GetResponseStream()))
                 {
                     var json = sr.ReadToEnd();
-                    var i = json.IndexOf("\"qrBrowser\":\"data:image/png;base64,");
-                    if (i >= 0)
+                    // The payload for the "best" host contains the QR + URL.
+                    var payloadStart = json.IndexOf("\"payload\":");
+                    var payloadChunk = payloadStart >= 0 ? json.Substring(payloadStart) : json;
+                    var qr = FindJsonString(payloadChunk, "qrBrowser");
+                    if (qr != null && qr.StartsWith("data:image/png;base64,"))
                     {
-                        var start = i + "\"qrBrowser\":\"data:image/png;base64,".Length;
-                        var end = json.IndexOf("\"", start);
-                        if (end > start)
+                        try
                         {
-                            var b64 = json.Substring(start, end - start);
-                            var img = Base64ToImage(b64);
-                            qrBox.Image = img;
-                            qrBox.Invalidate();
+                            var img = Base64ToImage(qr.Substring("data:image/png;base64,".Length));
+                            if (img != null)
+                            {
+                                qrBox.Image = img;
+                                qrBox.Invalidate();
+                            }
                         }
+                        catch { }
                     }
-                    var u = json.IndexOf("\"browserUrl\":\"");
-                    if (u >= 0)
-                    {
-                        var s2 = u + "\"browserUrl\":\"".Length;
-                        var e2 = json.IndexOf("\"", s2);
-                        if (e2 > s2) phoneUrlLabel.Text = json.Substring(s2, e2 - s2);
-                    }
+                    var url = FindJsonString(payloadChunk, "browserUrl");
+                    if (url == null) url = FindJsonString(json, "browserUrl"); // fallback
+                    if (url != null) phoneUrlLabel.Text = url;
                 }
             }
             catch { }
+        }
+
+        // Minimal JSON string extractor (no JSON parser dependency):
+        // finds "key":"value" (with possible escaped chars) starting after key.
+        private static string FindJsonString(string json, string key)
+        {
+            var needle = "\"" + key + "\":\"";
+            var i = json.IndexOf(needle);
+            if (i < 0) return null;
+            var start = i + needle.Length;
+            var sb = new StringBuilder();
+            for (int k = start; k < json.Length; k++)
+            {
+                var ch = json[k];
+                if (ch == '\\' && k + 1 < json.Length) { sb.Append(json[k + 1]); k++; continue; }
+                if (ch == '"') break;
+                sb.Append(ch);
+            }
+            return sb.ToString();
         }
 
         private static Image Base64ToImage(string b64)
