@@ -204,7 +204,7 @@
   </div>
 
   <div class="footer-note">
-    Chat: <b>8787</b> · Terminal: <b>8788</b> · Working dir: <span id="workDir">…</span>
+    Working dir: <span id="workDir">…</span> · Best host: <span id="bestHost">…</span>
   </div>
 </div>
 
@@ -260,11 +260,13 @@ function setMode(m) {
 function render() {
   const t = state.token;
   const q = `?token=${t}`;
-  setVal('localUrl', `http://localhost:8788/${q}`);
-  setVal('lanUrl', state.lan[0] ? `http://${state.lan[0]}:8788/${q}` : '(no LAN IP)');
-  setVal('tsUrl', state.tailscaleIP ? `http://${state.tailscaleIP}:8788/${q}` : '(Tailscale not connected)');
-  setVal('dnsUrl', state.magicDNS ? `http://${state.magicDNS}:8788/${q}` : '(no MagicDNS)');
+  const tPort = state.ports ? state.ports.terminal : 8788;
+  setVal('localUrl', `http://localhost:${tPort}/${q}`);
+  setVal('lanUrl', state.lan[0] ? `http://${state.lan[0]}:${tPort}/${q}` : '(no LAN IP)');
+  setVal('tsUrl', state.tailscaleIP ? `http://${state.tailscaleIP}:${tPort}/${q}` : '(Tailscale not connected)');
+  setVal('dnsUrl', state.magicDNS ? `http://${state.magicDNS}:${tPort}/${q}` : '(no MagicDNS)');
   document.getElementById('workDir').textContent = state.workDir || '';
+  document.getElementById('bestHost').textContent = state.best ? state.best.host : '—';
 
   // Token: masked by default; raw kept in dataset.
   const tv = document.getElementById('tokenVal');
