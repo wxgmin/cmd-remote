@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.log
+.DS_Store
+
+# Local TLS certs (personal, machine-specific)
+tls/
+
+# Generated icon artifacts stay, but keep the generator script
