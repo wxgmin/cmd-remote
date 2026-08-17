@@ -72,12 +72,76 @@
     min-height: 0;
     padding: 10px 6px;
     overflow: hidden;
+    touch-action: pan-y; /* let vertical touch gestures scroll the terminal */
+    position: relative;
   }
   .xterm { height: 100%; }
+  /* Thin scrollbar for the terminal viewport (desktop + mobile) */
+  .xterm .xterm-viewport { scrollbar-width: thin; }
+  /* Mobile toolbar */
+  #toolbar {
+    display: none;
+    flex-shrink: 0;
+    padding: 8px;
+    gap: 8px;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    backdrop-filter: blur(18px);
+    flex-wrap: wrap;
+    align-items: center;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  #toolbar button {
+    flex: 1 1 0;
+    min-width: 44px;
+    height: 42px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,.06);
+    color: var(--text);
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    gap: 4px;
+    padding: 0 6px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #toolbar button:active { background: rgba(139,92,246,.25); }
+  #toolbar button.latched {
+    background: var(--grad);
+    border-color: transparent;
+    box-shadow: 0 4px 16px rgba(139,92,246,.4);
+  }
+  #toolbar .sep { flex: 0 0 1px; height: 30px; align-self: center; background: var(--border); }
   .hint {
     font-size: 10px; color: var(--muted); text-align: center; padding: 5px;
     flex-shrink: 0; background: var(--panel); border-top: 1px solid var(--border);
     backdrop-filter: blur(18px);
+  }
+  /* Show the toolbar only on coarse pointers (phones/tablets) */
+  @media (pointer: coarse) {
+    #toolbar { display: flex; }
+    .hint { display: none; }
+  }
+  /* Up-arrow scroll hint while output is streaming past the bottom */
+  #scrollHint {
+    position: absolute;
+    bottom: 84px;
+    right: 10px;
+    z-index: 20;
+    display: none;
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: rgba(19,22,29,.92);
+    color: var(--text);
+    font-size: 18px;
+    align-items: center; justify-content: center;
+    box-shadow: 0 6px 20px rgba(0,0,0,.5);
+    cursor: pointer;
   }
 </style>
 </head>
@@ -88,7 +152,20 @@
   <div class="status"><span class="dot" id="dot"></span><span id="statusText">connecting</span></div>
 </header>
 <div id="term"></div>
-<div class="hint">Full terminal. Tap to focus, swipe to scroll. Ctrl shortcuts work via the toolbar or keyboard.</div>
+<div id="toolbar" aria-label="Terminal keys">
+  <button id="kCtrl" title="Hold Ctrl for shortcuts (Ctrl+C, Ctrl+D…)">Ctrl</button>
+  <button id="kEsc" title="Escape">Esc</button>
+  <button id="kTab" title="Tab">Tab</button>
+  <span class="sep"></span>
+  <button id="kUp" title="Arrow up">↑</button>
+  <button id="kDown" title="Arrow down">↓</button>
+  <button id="kLeft" title="Arrow left">←</button>
+  <button id="kRight" title="Arrow right">→</button>
+  <span class="sep"></span>
+  <button id="kEnter" title="Enter">↵</button>
+</div>
+<button id="scrollHint" title="Jump to latest output">↓</button>
+<div class="hint">Full terminal. Tap to focus, swipe to scroll, Ctrl shortcuts via the toolbar or keyboard.</div>
 
 <script src="/xterm.js"></script>
 <script src="/fit.js"></script>
@@ -97,6 +174,7 @@
   const termEl = document.getElementById('term');
   const dot = document.getElementById('dot');
   const statusText = document.getElementById('statusText');
+  const scrollHint = document.getElementById('scrollHint');
   const token = new URLSearchParams(location.search).get('token');
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const url = `${proto}://${location.host}/ws` + (token ? `?token=${encodeURIComponent(token)}` : '');
@@ -112,6 +190,74 @@
   term.loadAddon(fit);
   term.open(termEl);
   fit.fit();
+
+  // --- Scrolling: native touch scroll (xterm's viewport handles momentum on
+  // touch), auto-stick to the bottom while output streams, free scroll-up.
+  const viewport = termEl.querySelector('.xterm-viewport');
+  let stickToBottom = true;
+  function atBottom() {
+    return !viewport || viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 8;
+  }
+  function scrollToLatest() {
+    if (viewport) viewport.scrollTop = viewport.scrollHeight;
+  }
+  function refreshScrollHint() {
+    const near = atBottom();
+    scrollHint.style.display = near ? 'none' : 'flex';
+    if (near) stickToBottom = true;
+  }
+  if (viewport) {
+    // User-initiated scroll: stay put (stick-to-bottom re-engages at the bottom).
+    viewport.addEventListener('scroll', () => {
+      stickToBottom = atBottom();
+      refreshScrollHint();
+    }, { passive: true });
+    viewport.addEventListener('touchstart', () => { stickToBottom = false; }, { passive: true });
+  }
+  scrollHint.addEventListener('click', () => { stickToBottom = true; scrollToLatest(); refreshScrollHint(); });
+
+  // --- Toolbar: arrows / Esc / Tab / Ctrl send real PTY input ---
+  function sendKeys(seq) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: seq }));
+    term.focus();
+  }
+  const KEYS = {
+    kUp: '\x1b[A', kDown: '\x1b[B', kRight: '\x1b[C', kLeft: '\x1b[D',
+    kEsc: '\x1b', kTab: '\t', kEnter: '\r',
+  };
+  // Ctrl latch: tap once for the next key (Ctrl+C, Ctrl+D…), double-tap to hold.
+  const ctrlBtn = document.getElementById('kCtrl');
+  let ctrlLatched = false;
+  let ctrlHold = false;
+  let ctrlTapTimer = null;
+  function setCtrlUI() {
+    ctrlBtn.classList.toggle('latched', ctrlLatched || ctrlHold);
+    ctrlBtn.textContent = (ctrlLatched ? 'Ctrl… ' : ctrlHold ? 'CTRL ON ' : 'Ctrl ') + (ctrlLatched ? '1×' : ctrlHold ? '⏻' : '');
+  }
+  function clearCtrl() {
+    ctrlLatched = false;
+    ctrlHold = false;
+    clearTimeout(ctrlTapTimer);
+    setCtrlUI();
+  }
+  ctrlBtn.addEventListener('click', () => {
+    clearTimeout(ctrlTapTimer);
+    if (ctrlLatched) { ctrlHold = true; ctrlLatched = false; setCtrlUI(); return; }
+    ctrlLatched = true;
+    setCtrlUI();
+    // If no key follows within 1.6s, the latch expires.
+    ctrlTapTimer = setTimeout(() => { ctrlLatched = false; setCtrlUI(); }, 1600);
+  });
+  for (const [id, seq] of Object.entries(KEYS)) {
+    document.getElementById(id).addEventListener('click', () => {
+      // Apply a latched/hold Ctrl to letter keys (single-char sequences only).
+      if (ctrlLatched || ctrlHold) {
+        const c = seq.charCodeAt(0);
+        if (c >= 0x61 && c <= 0x7a) { sendKeys(String.fromCharCode(c - 0x60)); clearCtrl(); return; }
+      }
+      sendKeys(seq);
+    });
+  }
 
   let ws = null;
   let reconnectTimer = null;
@@ -148,6 +294,15 @@
   });
 
   term.onData((data) => {
+    // A latched/hold Ctrl also applies to the next character typed on the
+    // phone's soft keyboard (Ctrl+C, Ctrl+D, Ctrl+L…).
+    if (ctrlLatched || ctrlHold) {
+      if (data.length === 1) {
+        const c = data.charCodeAt(0);
+        if (c >= 0x61 && c <= 0x7a) { data = String.fromCharCode(c - 0x60); clearCtrl(); }
+        else if (c >= 0x41 && c <= 0x5a) { data = String.fromCharCode(c - 0x40); clearCtrl(); }
+      }
+    }
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
   });
 
@@ -156,10 +311,30 @@
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     }
+    refreshScrollHint();
   });
 
-  // Tap to focus + show keyboard on mobile
+  // Tap to focus + show keyboard on mobile. Only treat a tap (no movement) as
+  // a focus tap so swiping to scroll never pops the keyboard.
+  let tapStart = null;
+  termEl.addEventListener('touchstart', (e) => {
+    tapStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }, { passive: true });
+  termEl.addEventListener('touchend', (e) => {
+    if (!tapStart) return;
+    const dx = e.changedTouches[0].clientX - tapStart.x;
+    const dy = e.changedTouches[0].clientY - tapStart.y;
+    tapStart = null;
+    if (Math.hypot(dx, dy) < 10) term.focus();
+  }, { passive: true });
   termEl.addEventListener('click', () => term.focus());
+
+  // Keep following new output only while the user is at the bottom.
+  const origWrite = term.write.bind(term);
+  term.write = (data) => {
+    origWrite(data);
+    if (stickToBottom) scrollToLatest();
+  };
 
   connect();
 })();

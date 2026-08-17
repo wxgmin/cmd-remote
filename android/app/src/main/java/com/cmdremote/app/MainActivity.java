@@ -223,6 +223,12 @@ public class MainActivity extends AppCompatActivity {
         ws.setUseWideViewPort(true);
         ws.setLoadWithOverviewMode(true);
         ws.setMediaPlaybackRequiresUserGesture(false);
+        // Smooth, responsive touch scrolling (critical for terminal + chat).
+        ws.setSupportZoom(false);
+        webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        webView.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+        // Native momentum/fling scrolling on the WebView itself.
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
 
         String sep = baseUrl.contains("?") ? "&" : "?";
         String url = baseUrl + sep + "token=" + (token == null ? "" : token);
