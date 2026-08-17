@@ -315,6 +315,7 @@
 
   let ws = null;
   let currentSessionId = null;
+  let pendingResumeId = null;
   let busy = false;
   let currentAssistantEl = null;
   let reconnectTimer = null;
@@ -471,6 +472,7 @@
       if (!r.ok) throw new Error('failed');
       const conv = await r.json();
       currentSessionId = null; // terminal sessions use their own context; new proxy conv
+      pendingResumeId = id;
       chatTitle.textContent = 'Terminal: ' + id.slice(0, 8);
       messagesEl.innerHTML = '';
       addMsg('Continuing terminal session ' + id + '. Send a message to continue it on your PC.', 'thinking');
@@ -478,9 +480,7 @@
         if (m.role === 'user') addMsg(m.content, 'user');
         else if (m.role === 'assistant') addMsg(m.content, 'assistant');
       }
-      // Set the resume target in the proxy conv settings via /resume
-      currentSessionId = null;
-      // Open a fresh proxy conversation bound to the terminal session
+      // Bind the terminal session to a fresh proxy conversation via /resume.
       ws.send(JSON.stringify({ type: 'chat', text: '/resume ' + id, sessionId: null, yolo: true }));
       closeSidebarOnMobile();
     } catch { addMsg('Could not load terminal session.', 'error'); }
@@ -489,6 +489,7 @@
   function newChat() {
     if (busy) return;
     currentSessionId = null;
+    pendingResumeId = null;
     chatTitle.textContent = 'New chat';
     messagesEl.innerHTML = '';
     renderSessionList();
@@ -556,10 +557,17 @@
     addMsg(text, 'user');
     inputEl.value = '';
     inputEl.style.height = 'auto';
+    // If we're still waiting on a /resume binding, queue the message for that
+    // terminal session instead of starting a fresh conversation.
+    let sid = currentSessionId;
+    if (pendingResumeId && !sid) {
+      ws.send(JSON.stringify({ type: 'chat', text: '/resume ' + pendingResumeId, sessionId: null, yolo: true }));
+      pendingResumeId = null;
+    }
     if (chatTitle.textContent === 'New chat') {
       chatTitle.textContent = text.length > 40 ? text.slice(0, 40) + '…' : text;
     }
-    ws.send(JSON.stringify({ type: 'chat', text, sessionId: currentSessionId, yolo: true }));
+    ws.send(JSON.stringify({ type: 'chat', text, sessionId: sid, yolo: true }));
   }
 
   // --- Mobile sidebar ---

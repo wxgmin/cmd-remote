@@ -78,11 +78,35 @@ if errorlevel 1 (
   powershell -NoProfile -Command "Start-Process -Verb RunAs -Wait -FilePath 'netsh' -ArgumentList 'advfirewall','firewall','add','rule','name=cmd-remote','dir=in','action=allow','protocol=TCP','localport=8787,8788'" 2>nul
 )
 
+REM --- Desktop shortcut (optional) ---
+echo.
+echo [5/5] Creating desktop shortcut...
+powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; $lnk = $ws.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\Cmd Remote.lnk'); $lnk.TargetPath = '%~dp0start.bat'; $lnk.WorkingDirectory = '%~dp0'; $lnk.Save()" 2>nul
+if errorlevel 1 (
+  echo [WARN] Could not create desktop shortcut.
+) else (
+  echo [OK] Desktop shortcut created ("Cmd Remote").
+)
+
+REM --- Autostart (optional) ---
+echo.
+set /p AUTOSTART="Start cmd-remote automatically when you log in? (y/N): "
+if /i "%AUTOSTART%"=="y" (
+  powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; $lnk = $ws.CreateShortcut([Environment]::GetFolderPath('Startup') + '\Cmd Remote.lnk'); $lnk.TargetPath = '%~dp0start.bat'; $lnk.WorkingDirectory = '%~dp0'; $lnk.Save()" 2>nul
+  if errorlevel 1 (
+    echo [WARN] Could not create autostart entry.
+  ) else (
+    echo [OK] Will start automatically on login.
+  )
+) else (
+  echo [SKIP] Autostart not enabled.
+)
+
 echo.
 echo ============================================================
 echo  Installation complete!
 echo.
-echo  Start the servers with:   start.bat
+echo  Start the servers with:   start.bat   (or the desktop shortcut)
 echo  See your phone URLs with: url.cmd
 echo ============================================================
 pause

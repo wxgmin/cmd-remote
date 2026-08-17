@@ -77,24 +77,38 @@
   fit.fit();
 
   let ws = null;
+  let reconnectTimer = null;
+  let reconnectDelay = 1000;
   function setStatus(state, text) {
     dot.className = 'dot ' + state;
     statusText.textContent = text || (state === 'on' ? 'connected' : state === 'off' ? 'disconnected' : 'connecting');
   }
   function connect() {
+    clearTimeout(reconnectTimer);
+    setStatus('', 'connecting');
     ws = new WebSocket(url);
     ws.onopen = () => {
       setStatus('on');
+      reconnectDelay = 1000;
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     };
-    ws.onclose = () => setStatus('off', 'disconnected — tap to reconnect');
+    ws.onclose = () => {
+      setStatus('off', 'disconnected — tap to reconnect');
+      // Auto-reconnect with backoff (phone backgrounding kills sockets).
+      reconnectTimer = setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+    };
     ws.onerror = () => ws.close();
     ws.onmessage = (e) => {
       let msg; try { msg = JSON.parse(e.data); } catch { return; }
       if (msg.type === 'output') term.write(msg.data);
-      else if (msg.type === 'exit') { setStatus('off', 'session ended — reconnect'); term.write('\r\n[process exited]\r\n'); }
+      else if (msg.type === 'exit') { setStatus('off', 'session ended — tap to restart'); term.write('\r\n[process exited]\r\n'); clearTimeout(reconnectTimer); }
     };
   }
+  // Tap the header/status to reconnect immediately.
+  document.querySelector('header').addEventListener('click', () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) { clearTimeout(reconnectTimer); connect(); }
+  });
 
   term.onData((data) => {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));

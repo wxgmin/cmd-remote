@@ -1,0 +1,14 @@
+Bug fixes, Android app, CI build, installer polish
+
+- Fix url.cmd token propagation, LAN/Tailscale IP display
+- Fix service worker: never cache auth-gated HTML, only static assets
+- TTY page: auto-reconnect with backoff + tap-to-reconnect
+- Chat UI: fix terminal-session resume race (pendingResumeId)
+- install.bat: desktop shortcut + optional autostart
+- Add Android WebView app (settings screen, token, WebView terminal)
+- Add GitHub Actions workflow: builds APK on push, uploads artifact,
+  attaches to tagged releases
+- Verified: PC(TTY) -> mobile(chat) session switching with context,
+  MCP tools available in spawned runs, full slash command menu in TTY
+
+Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
