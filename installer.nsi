@@ -25,13 +25,49 @@ SetCompressor /SOLID lzma
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
+
+; Shortcut options page (custom)
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW shortcuts_show
+Page custom shortcuts_create shortcuts_leave
+
 !insertmacro MUI_PAGE_INSTFILES
+!define MUI_FINISHPAGE_RUN "$INSTDIR\CmdRemoteApp.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Open Cmd Remote now"
+!define MUI_FINISHPAGE_RUN_CHECKED
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 
 !insertmacro MUI_LANGUAGE "English"
+
+Var ShortcutsDesktop
+Var ShortcutsStartMenu
+Var ShortcutsAutostart
+
+Function shortcuts_create
+  !insertmacro MUI_HEADER_TEXT "Create shortcuts" "Choose where Cmd Remote shortcuts appear."
+  nsDialogs::Create 1018
+  Pop $0
+  ${NSD_CreateLabel} 0 0 100% 24u "Choose where to create shortcuts for Cmd Remote:"
+  ${NSD_CreateCheckBox} 0 40u 100% 14u "&Desktop shortcut"
+    Pop $ShortcutsDesktop
+    ${NSD_Check} $ShortcutsDesktop
+  ${NSD_CreateCheckBox} 0 62u 100% 14u "&Start Menu shortcut"
+    Pop $ShortcutsStartMenu
+    ${NSD_Check} $ShortcutsStartMenu
+  ${NSD_CreateCheckBox} 0 84u 100% 14u "&Start automatically when I log in"
+    Pop $ShortcutsAutostart
+  ${NSD_CreateLabel} 0 110u 100% 30u "The desktop app lets you start/stop the servers, open the Control Panel (QR code, token) and copy the phone URL."
+  nsDialogs::Show
+FunctionEnd
+
+Function shortcuts_show
+  ${NSD_Uncheck} $ShortcutsAutostart
+FunctionEnd
+
+Function shortcuts_leave
+FunctionEnd
 
 ; ---------- Sections ----------
 Section "Install"
@@ -51,6 +87,7 @@ Section "Install"
   File "AGENTS.md"
   File "README.md"
   File ".env.example"
+  File "CmdRemoteApp.exe"
 
   ; lib + public + scripts
   SetOutPath "$INSTDIR\lib"
@@ -105,14 +142,21 @@ Section "Install"
     nsExec::ExecToLog '"$SYSDIR\cmd.exe" /c "cd /d ""$INSTDIR"" && node setup.mjs"'
     Pop $0
 
-    ; ---------- Shortcuts ----------
-    CreateDirectory "$SMPROGRAMS\Cmd Remote"
-    CreateShortcut "$SMPROGRAMS\Cmd Remote\Cmd Remote Control Panel.lnk" "$INSTDIR\panel.cmd" "" "$INSTDIR\panel.cmd" 0 SW_SHOWNORMAL "" "Open the control panel with server address, token and QR"
-    CreateShortcut "$SMPROGRAMS\Cmd Remote\Start Cmd Remote.lnk" "$INSTDIR\start.bat" "" "$INSTDIR\start.bat" 0 SW_SHOWNORMAL "" "Start the Cmd Remote servers"
-    CreateShortcut "$SMPROGRAMS\Cmd Remote\Show Phone URLs.lnk" "$INSTDIR\url.cmd" "" "$INSTDIR\url.cmd" 0 SW_SHOWNORMAL "" "Print all phone URLs"
-    CreateShortcut "$SMPROGRAMS\Cmd Remote\Uninstall.lnk" "$INSTDIR\uninstall.exe"
-    CreateShortcut "$DESKTOP\Cmd Remote Control Panel.lnk" "$INSTDIR\panel.cmd" "" "$INSTDIR\panel.cmd" 0 SW_SHOWNORMAL "" "Open the control panel with server address, token and QR"
-    CreateShortcut "$DESKTOP\Cmd Remote.lnk" "$INSTDIR\start.bat" "" "$INSTDIR\start.bat" 0 SW_SHOWNORMAL "" "Start the Cmd Remote servers"
+    ; ---------- Shortcuts (from the options page) ----------
+    ${If} $ShortcutsStartMenu == ${BST_CHECKED}
+      CreateDirectory "$SMPROGRAMS\Cmd Remote"
+      CreateShortcut "$SMPROGRAMS\Cmd Remote\Cmd Remote.lnk" "$INSTDIR\CmdRemoteApp.exe" "" "$INSTDIR\CmdRemoteApp.exe" 0 SW_SHOWNORMAL "" "Open the Cmd Remote app"
+      CreateShortcut "$SMPROGRAMS\Cmd Remote\Cmd Remote Control Panel.lnk" "$INSTDIR\panel.cmd" "" "$INSTDIR\panel.cmd" 0 SW_SHOWNORMAL "" "Open the control panel with server address, token and QR"
+      CreateShortcut "$SMPROGRAMS\Cmd Remote\Uninstall.lnk" "$INSTDIR\uninstall.exe"
+    ${EndIf}
+    ${If} $ShortcutsDesktop == ${BST_CHECKED}
+      CreateShortcut "$DESKTOP\Cmd Remote.lnk" "$INSTDIR\CmdRemoteApp.exe" "" "$INSTDIR\CmdRemoteApp.exe" 0 SW_SHOWNORMAL "" "Open the Cmd Remote app"
+      CreateShortcut "$DESKTOP\Cmd Remote Control Panel.lnk" "$INSTDIR\panel.cmd" "" "$INSTDIR\panel.cmd" 0 SW_SHOWNORMAL "" "Open the control panel with server address, token and QR"
+    ${EndIf}
+    ${If} $ShortcutsAutostart == ${BST_CHECKED}
+      CreateDirectory "$SMPROGRAMS\Cmd Remote"
+      CreateShortcut "$SMSTARTUP\Cmd Remote.lnk" "$INSTDIR\CmdRemoteApp.exe" "" "$INSTDIR\CmdRemoteApp.exe" 0 SW_SHOWNORMAL "" "Open the Cmd Remote app"
+    ${EndIf}
 
     ; ---------- Registry (uninstall entry) ----------
     WriteRegStr HKCU "${REGKEY}" "InstallDir" "$INSTDIR"
@@ -130,13 +174,13 @@ SectionEnd
 Section "Uninstall"
   Delete "$INSTDIR\uninstall.exe"
   RMDir /r "$INSTDIR"
+  Delete "$SMPROGRAMS\Cmd Remote\Cmd Remote.lnk"
   Delete "$SMPROGRAMS\Cmd Remote\Cmd Remote Control Panel.lnk"
-  Delete "$SMPROGRAMS\Cmd Remote\Start Cmd Remote.lnk"
-  Delete "$SMPROGRAMS\Cmd Remote\Show Phone URLs.lnk"
   Delete "$SMPROGRAMS\Cmd Remote\Uninstall.lnk"
   RMDir "$SMPROGRAMS\Cmd Remote"
-  Delete "$DESKTOP\Cmd Remote Control Panel.lnk"
+  Delete "$SMSTARTUP\Cmd Remote.lnk"
   Delete "$DESKTOP\Cmd Remote.lnk"
+  Delete "$DESKTOP\Cmd Remote Control Panel.lnk"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CmdRemote"
   DeleteRegKey HKCU "${REGKEY}"
 SectionEnd
