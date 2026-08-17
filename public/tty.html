@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#0b0d12">
 <title>Command Code Terminal</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -88,7 +88,7 @@
   <div class="status"><span class="dot" id="dot"></span><span id="statusText">connecting</span></div>
 </header>
 <div id="term"></div>
-<div class="hint">Full terminal — tap to focus, swipe to scroll. Ctrl shortcuts work via the toolbar/keyboard.</div>
+<div class="hint">Full terminal. Tap to focus, swipe to scroll. Ctrl shortcuts work via the toolbar or keyboard.</div>
 
 <script src="/xterm.js"></script>
 <script src="/fit.js"></script>
@@ -130,7 +130,7 @@
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     };
     ws.onclose = () => {
-      setStatus('off', 'disconnected — tap to reconnect');
+      setStatus('off', 'disconnected. Tap to reconnect');
       // Auto-reconnect with backoff (phone backgrounding kills sockets).
       reconnectTimer = setTimeout(connect, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, 15000);
@@ -139,7 +139,7 @@
     ws.onmessage = (e) => {
       let msg; try { msg = JSON.parse(e.data); } catch { return; }
       if (msg.type === 'output') term.write(msg.data);
-      else if (msg.type === 'exit') { setStatus('off', 'session ended — tap to restart'); term.write('\r\n[process exited]\r\n'); clearTimeout(reconnectTimer); }
+      else if (msg.type === 'exit') { setStatus('off', 'session ended. Tap to restart'); term.write('\r\n[process exited]\r\n'); clearTimeout(reconnectTimer); }
     };
   }
   // Tap the header/status to reconnect immediately.

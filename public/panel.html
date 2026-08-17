@@ -3,93 +3,113 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="theme-color" content="#0b0d12">
+<meta name="theme-color" content="#fafafa" id="themeMeta">
 <title>Cmd Remote · Control Panel</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
+  /* Light-first design: white space, thin dividers, one blue accent. */
   :root {
-    --bg: #0b0d12;
-    --panel: rgba(255,255,255,.045);
-    --panel-solid: #13161d;
-    --border: rgba(255,255,255,.09);
-    --text: #f2f4f8;
+    --bg: #fafafa;
+    --panel: #ffffff;
+    --border: #e5e7eb;
+    --text: #111827;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --accent-soft: #eff6ff;
+    --green: #16a34a;
+    --amber: #d97706;
+    --red: #dc2626;
+    --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --radius: 12px;
+  }
+  [data-theme="dark"] {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #262b36;
+    --text: #e6e9ef;
     --muted: #9aa3b5;
-    --violet: #8b5cf6;
-    --cyan: #06b6d4;
-    --grad: linear-gradient(135deg, #8b5cf6, #06b6d4);
-    --green: #34d399;
-    --amber: #f59e0b;
-    --red: #ff6b81;
+    --accent: #60a5fa;
+    --accent-soft: rgba(37,99,235,.14);
+    --shadow: 0 1px 3px rgba(0,0,0,.4);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     min-height: 100vh;
-    padding: 32px 20px;
-    position: relative;
-    overflow-x: hidden;
+    padding: 28px 20px 40px;
+    transition: background .15s ease, color .15s ease;
   }
-  body::before {
-    content: ''; position: fixed; width: 480px; height: 480px;
-    top: -160px; right: -120px; background: rgba(139,92,246,.14);
-    border-radius: 50%; filter: blur(110px); pointer-events: none;
-  }
-  body::after {
-    content: ''; position: fixed; width: 420px; height: 420px;
-    bottom: -140px; left: -100px; background: rgba(6,182,212,.12);
-    border-radius: 50%; filter: blur(110px); pointer-events: none;
-  }
-  .wrap { max-width: 860px; margin: 0 auto; position: relative; z-index: 1; }
+  .wrap { max-width: 760px; margin: 0 auto; }
 
-  header { display: flex; align-items: center; gap: 14px; margin-bottom: 26px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
   .logo-mark {
-    width: 46px; height: 46px; border-radius: 14px; background: var(--grad);
+    width: 40px; height: 40px; border-radius: 10px;
+    background: var(--accent);
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 8px 30px rgba(139,92,246,.45); flex-shrink: 0;
+    flex-shrink: 0;
   }
   .logo-mark svg { width: 58%; height: 58%; }
-  header h1 { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
-  header p { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  header h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  header p { color: var(--muted); font-size: 13px; margin-top: 1px; }
+  header .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+
   .status-pill {
-    margin-left: auto; display: flex; align-items: center; gap: 7px;
+    display: flex; align-items: center; gap: 6px;
     font-size: 12px; font-weight: 600; color: var(--green);
-    background: rgba(52,211,153,.1); border: 1px solid rgba(52,211,153,.3);
-    padding: 6px 13px; border-radius: 20px;
+    background: var(--panel); border: 1px solid var(--border);
+    padding: 5px 12px; border-radius: 999px;
   }
-  .status-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+
+  .theme-btn {
+    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    font-size: 12px; font-weight: 500; padding: 5px 12px; border-radius: 999px;
+    cursor: pointer;
+  }
+  .theme-btn:hover { border-color: var(--accent); color: var(--accent); }
 
   .card {
-    background: var(--panel); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-    border: 1px solid var(--border); border-radius: 18px;
-    padding: 22px; margin-bottom: 18px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 20px;
+    margin-bottom: 16px;
   }
-  .card h2 { font-size: 15px; font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
-  .card h2 .ico { width: 22px; height: 22px; border-radius: 7px; background: var(--grad); display: flex; align-items: center; justify-content: center; font-size: 11px; }
+  .card h2 { font-size: 14px; font-weight: 650; margin-bottom: 14px; }
 
-  .row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   .row:last-child { border-bottom: none; }
-  .row .label { font-size: 12px; color: var(--muted); min-width: 150px; font-weight: 600; }
+  .row .label { font-size: 12px; color: var(--muted); min-width: 150px; font-weight: 500; }
   .row .value {
     flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 13px; background: rgba(255,255,255,.05);
-    border: 1px solid var(--border); border-radius: 9px; padding: 7px 11px;
-    word-break: break-all; min-width: 200px;
+    font-size: 12.5px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 10px; word-break: break-all; min-width: 200px;
   }
   .btn {
-    border: none; border-radius: 10px; padding: 8px 15px; cursor: pointer;
-    font-size: 13px; font-weight: 600; color: #fff; background: var(--grad);
-    box-shadow: 0 4px 16px rgba(139,92,246,.35); transition: transform .1s ease;
+    border: 1px solid var(--accent); border-radius: 8px; padding: 7px 14px; cursor: pointer;
+    font-size: 13px; font-weight: 600; color: #fff; background: var(--accent);
+    transition: opacity .1s ease;
   }
-  .btn:hover { transform: translateY(-1px); }
-  .btn.ghost { background: rgba(255,255,255,.07); border: 1px solid var(--border); box-shadow: none; color: var(--text); }
-  .btn.small { padding: 5px 11px; font-size: 12px; }
+  .btn:hover { opacity: .9; }
+  .btn.ghost { background: var(--panel); color: var(--text); border-color: var(--border); }
+  .btn.ghost:hover { border-color: var(--accent); color: var(--accent); opacity: 1; }
+  .btn.small { padding: 4px 10px; font-size: 12px; }
+
+  .seg { display: flex; gap: 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 3px; margin-bottom: 12px; width: fit-content; }
+  .seg button {
+    border: none; background: transparent; color: var(--muted);
+    font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 7px; cursor: pointer;
+  }
+  .seg button.active { background: var(--accent); color: #fff; }
+  .seg-note { font-size: 12px; color: var(--muted); margin-bottom: 14px; min-height: 16px; }
 
   .qr-wrap { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
   .qr-box {
-    background: #fff; border-radius: 14px; padding: 12px;
-    box-shadow: 0 10px 40px rgba(0,0,0,.5); width: 200px; height: 200px;
+    background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+    width: 180px; height: 180px;
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
   .qr-box img { width: 100%; height: 100%; image-rendering: pixelated; }
@@ -97,49 +117,40 @@
   .qr-side p { color: var(--muted); font-size: 13px; line-height: 1.55; margin-bottom: 12px; }
   .qr-side .big-url {
     font-family: ui-monospace, Menlo, monospace; font-size: 12px;
-    background: rgba(255,255,255,.05); border: 1px solid var(--border);
-    border-radius: 9px; padding: 9px 12px; word-break: break-all; margin-bottom: 12px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px; word-break: break-all; margin-bottom: 12px;
   }
+  .qr-side .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
-  .ts-status { display: flex; align-items: center; gap: 10px; font-size: 14px; margin-bottom: 14px; }
-  .ts-status .badge {
-    padding: 4px 11px; border-radius: 20px; font-size: 12px; font-weight: 700;
-  }
-  .ts-status .badge.ok { background: rgba(52,211,153,.12); color: var(--green); border: 1px solid rgba(52,211,153,.3); }
-  .ts-status .badge.missing { background: rgba(255,107,129,.1); color: var(--red); border: 1px solid rgba(255,107,129,.3); }
-  .ts-status .badge.down { background: rgba(245,158,11,.12); color: var(--amber); border: 1px solid rgba(245,158,11,.3); }
-  .ts-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .ts-status { display: flex; align-items: center; gap: 10px; font-size: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+  .ts-status .badge { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .ts-status .badge.ok { background: var(--accent-soft); color: var(--green); border: 1px solid var(--border); }
+  .ts-status .badge.missing { background: #fef2f2; color: var(--red); border: 1px solid var(--border); }
+  .ts-status .badge.down { background: #fffbeb; color: var(--amber); border: 1px solid var(--border); }
+  .ts-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .msg { font-size: 13px; margin-top: 12px; min-height: 18px; }
   .msg.err { color: var(--red); }
   .msg.ok { color: var(--green); }
 
   .footer-note { color: var(--muted); font-size: 12px; text-align: center; margin-top: 24px; line-height: 1.6; }
-
-  .seg {
-    display: flex; gap: 6px; background: rgba(255,255,255,.05);
-    border: 1px solid var(--border); border-radius: 12px; padding: 4px; margin-bottom: 16px; width: fit-content;
-  }
-  .seg button {
-    border: none; background: transparent; color: var(--muted);
-    font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 9px; cursor: pointer; transition: all .12s ease;
-  }
-  .seg button.active { background: var(--grad); color: #fff; box-shadow: 0 4px 14px rgba(139,92,246,.4); }
-  .seg-note { font-size: 12px; color: var(--muted); margin-bottom: 14px; min-height: 16px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <div class="logo-mark"><svg viewBox="0 0 64 64" fill="none"><path d="M20 24 L37 32 L20 40" stroke="#fff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M25 44 h15" stroke="#fff" stroke-width="6.5" stroke-linecap="round"/></svg></div>
+    <div class="logo-mark"><svg viewBox="0 0 64 64" fill="none"><path d="M20 24 L37 32 L20 40" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><path d="M25 44 h15" stroke="#fff" stroke-width="7" stroke-linecap="round"/></svg></div>
     <div>
       <h1>Cmd Remote · Control Panel</h1>
       <p>Everything your phone needs to connect to this PC</p>
     </div>
-    <div class="status-pill"><span class="dot"></span>Online</div>
+    <div class="right">
+      <div class="status-pill" id="statusPill"><span class="dot" id="statusDot"></span><span id="statusText">Checking</span></div>
+      <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">Dark</button>
+    </div>
   </header>
 
   <div class="card">
-    <h2><span class="ico">⌁</span> Server address</h2>
+    <h2>Server address</h2>
     <div class="row"><span class="label">On this PC</span><span class="value" id="localUrl">…</span><button class="btn ghost small" onclick="copyVal('localUrl')">Copy</button></div>
     <div class="row"><span class="label">Home Wi-Fi (LAN)</span><span class="value" id="lanUrl">…</span><button class="btn ghost small" onclick="copyVal('lanUrl')">Copy</button></div>
     <div class="row"><span class="label">Anywhere (Tailscale)</span><span class="value" id="tsUrl">…</span><button class="btn ghost small" onclick="copyVal('tsUrl')">Copy</button></div>
@@ -147,7 +158,7 @@
   </div>
 
   <div class="card">
-    <h2><span class="ico">✱</span> Access token</h2>
+    <h2>Access token</h2>
     <div class="row">
       <span class="label">Token (keep secret)</span>
       <span class="value" id="tokenVal">…</span>
@@ -157,7 +168,7 @@
   </div>
 
   <div class="card">
-    <h2><span class="ico">▦</span> Scan with your phone</h2>
+    <h2>Scan with your phone</h2>
     <div class="seg" id="modeSeg">
       <button data-mode="auto" class="active" onclick="setMode('auto')">Auto</button>
       <button data-mode="tailscale" onclick="setMode('tailscale')">Tailscale</button>
@@ -167,9 +178,9 @@
     <div class="qr-wrap">
       <div class="qr-box"><img id="qrImg" alt="QR code"></div>
       <div class="qr-side">
-        <p><b>Scan with the Cmd Remote app</b> to connect instantly — it auto-fills the server and token. Or scan with your camera to open the terminal in the browser.</p>
+        <p>Scan with the <b>Cmd Remote app</b> to connect instantly. Or scan with your camera to open the terminal in your browser.</p>
         <div class="big-url" id="qrUrl">…</div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <div class="actions">
           <button class="btn" onclick="copyVal('qrUrl')">Copy URL</button>
           <button class="btn ghost" onclick="copyDeep()">Copy app link</button>
         </div>
@@ -178,7 +189,7 @@
   </div>
 
   <div class="card">
-    <h2><span class="ico">◎</span> Tailscale (anywhere access)</h2>
+    <h2>Tailscale (anywhere access)</h2>
     <div class="ts-status">
       <span>Status:</span>
       <span class="badge" id="tsBadge">…</span>
@@ -193,8 +204,7 @@
   </div>
 
   <div class="footer-note">
-    Tip: keep this window open and your phone will reconnect automatically.<br>
-    Servers: chat on <b>8787</b> · terminal on <b>8788</b> · working dir: <span id="workDir">…</span>
+    Chat: <b>8787</b> · Terminal: <b>8788</b> · Working dir: <span id="workDir">…</span>
   </div>
 </div>
 
@@ -202,17 +212,43 @@
 let state = null;
 let currentMode = 'auto';
 let currentPayload = null;
+const tokenParam = new URLSearchParams(location.search).get('token');
+
+// Theme (persisted)
+const themeMeta = document.getElementById('themeMeta');
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  document.getElementById('themeBtn').textContent = t === 'dark' ? 'Light' : 'Dark';
+  themeMeta.content = t === 'dark' ? '#0f1115' : '#fafafa';
+}
+let theme = localStorage.getItem('cmd_remote_theme') || 'light';
+applyTheme(theme);
+function toggleTheme() {
+  theme = theme === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('cmd_remote_theme', theme);
+  applyTheme(theme);
+}
 
 async function load() {
   try {
-    const r = await fetch('/api/panel?mode=' + currentMode, { headers: { Authorization: 'Bearer ' + new URLSearchParams(location.search).get('token') } });
+    const r = await fetch('/api/panel?mode=' + currentMode, { headers: { Authorization: 'Bearer ' + tokenParam } });
     if (!r.ok) throw new Error('unauthorized');
     state = await r.json();
     currentPayload = state.best?.payload || state.modes[Object.keys(state.modes)[0]] || null;
     render();
+    setStatus(true);
   } catch {
-    document.body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--red)">Could not load panel — check the token.</div>';
+    setStatus(false);
+    document.body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--red)">Could not load panel. Check the token.</div>';
   }
+}
+
+function setStatus(okState) {
+  const pill = document.getElementById('statusPill');
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  if (okState) { pill.style.color = 'var(--green)'; dot.style.background = 'var(--green)'; text.textContent = 'Online'; }
+  else { pill.style.color = 'var(--red)'; dot.style.background = 'var(--red)'; text.textContent = 'Offline'; }
 }
 
 function setMode(m) {
@@ -224,28 +260,30 @@ function setMode(m) {
 function render() {
   const t = state.token;
   const q = `?token=${t}`;
-  const local = `http://localhost:8788/${q}`;
-  const lan = state.lan[0] ? `http://${state.lan[0]}:8788/${q}` : '(no LAN IP)';
-  const ts = state.tailscaleIP ? `http://${state.tailscaleIP}:8788/${q}` : '(Tailscale not connected)';
-  const dns = state.magicDNS ? `http://${state.magicDNS}:8788/${q}` : '(no MagicDNS)';
-
-  setVal('localUrl', local); setVal('lanUrl', lan); setVal('tsUrl', ts); setVal('dnsUrl', dns);
-  setVal('tokenVal', t);
+  setVal('localUrl', `http://localhost:8788/${q}`);
+  setVal('lanUrl', state.lan[0] ? `http://${state.lan[0]}:8788/${q}` : '(no LAN IP)');
+  setVal('tsUrl', state.tailscaleIP ? `http://${state.tailscaleIP}:8788/${q}` : '(Tailscale not connected)');
+  setVal('dnsUrl', state.magicDNS ? `http://${state.magicDNS}:8788/${q}` : '(no MagicDNS)');
   document.getElementById('workDir').textContent = state.workDir || '';
 
-  // Mode note
+  // Token: masked by default; raw kept in dataset.
+  const tv = document.getElementById('tokenVal');
+  tv.dataset.raw = t;
+  tokenShown = false;
+  tv.textContent = '••••••••••••••••••••';
+  document.getElementById('tokenToggle').textContent = 'Show';
+
   const note = document.getElementById('modeNote');
-  if (currentMode === 'auto') note.textContent = 'Auto: picks Tailscale when available, otherwise your Wi-Fi.';
-  else if (currentMode === 'tailscale') note.textContent = 'Tailscale: works from anywhere. Phone must have Tailscale on the same account.';
+  if (currentMode === 'auto') note.textContent = 'Auto: uses Tailscale when available, otherwise your Wi-Fi.';
+  else if (currentMode === 'tailscale') note.textContent = 'Tailscale: works from anywhere. Phone needs Tailscale on the same account.';
   else note.textContent = 'Local: same Wi-Fi only. No Tailscale needed.';
 
-  // QR + URL from the current payload
   if (currentPayload) {
-    document.getElementById('qrImg').src = currentPayload.qrDeep || currentPayload.qrBrowser || '';
+    // Default QR is the browser URL so a plain camera scan opens the terminal.
+    document.getElementById('qrImg').src = currentPayload.qrBrowser || currentPayload.qrDeep || '';
     document.getElementById('qrUrl').textContent = currentPayload.browserUrl || '';
   }
 
-  // Tailscale status
   const badge = document.getElementById('tsBadge');
   if (!state.tailscaleInstalled) {
     badge.textContent = 'Not installed'; badge.className = 'badge missing';
@@ -260,27 +298,30 @@ function render() {
   }
 }
 
-function copyDeep() {
-  if (currentPayload) {
-    navigator.clipboard.writeText(currentPayload.deepLink).then(() => {
-      const b = event.target; const old = b.textContent; b.textContent = 'Copied!';
-      setTimeout(() => b.textContent = old, 1200);
-    });
-  }
-}
+function setVal(id, text) { const el = document.getElementById(id); el.textContent = text; el.dataset.raw = text; }
 
-function setVal(id, text) {
-  const el = document.getElementById(id);
-  el.textContent = text;
-  el.dataset.raw = text;
+function copyText(raw, btn) {
+  function done() { const old = btn.textContent; btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = old, 1200); }
+  function fallback() {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = raw;
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) done(); else btn.textContent = 'Copy failed';
+    } catch (e) { btn.textContent = 'Copy failed'; }
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(raw).then(done).catch(fallback);
+  } else fallback();
 }
 function copyVal(id) {
   const el = document.getElementById(id);
   const raw = el.dataset.raw || el.textContent;
-  navigator.clipboard.writeText(raw).then(() => {
-    const b = event.target; const old = b.textContent; b.textContent = 'Copied!';
-    setTimeout(() => b.textContent = old, 1200);
-  });
+  copyText(raw, event.target);
 }
 let tokenShown = false;
 function toggleToken() {
@@ -290,12 +331,15 @@ function toggleToken() {
   if (tokenShown) { el.textContent = el.dataset.raw; btn.textContent = 'Hide'; }
   else { el.textContent = '••••••••••••••••••••'; btn.textContent = 'Show'; }
 }
+function copyDeep() {
+  if (currentPayload) copyText(currentPayload.deepLink, event.target);
+}
 
 async function tailscaleUp() {
   const msg = document.getElementById('tsMsg');
   msg.textContent = 'Connecting…'; msg.className = 'msg';
   try {
-    const r = await fetch('/api/tailscale/up', { method: 'POST', headers: { Authorization: 'Bearer ' + new URLSearchParams(location.search).get('token') } });
+    const r = await fetch('/api/tailscale/up', { method: 'POST', headers: { Authorization: 'Bearer ' + tokenParam } });
     const j = await r.json();
     msg.textContent = j.message; msg.className = 'msg ' + (j.ok ? 'ok' : 'err');
     if (j.ok) setTimeout(load, 2500);
@@ -305,18 +349,17 @@ async function tailscaleInstall() {
   const msg = document.getElementById('tsMsg');
   msg.textContent = 'Installing Tailscale… (may take a minute)'; msg.className = 'msg';
   try {
-    const r = await fetch('/api/tailscale/up', { method: 'POST', headers: { Authorization: 'Bearer ' + new URLSearchParams(location.search).get('token') } });
+    const r = await fetch('/api/tailscale/up', { method: 'POST', headers: { Authorization: 'Bearer ' + tokenParam } });
     const j = await r.json();
     msg.textContent = j.message; msg.className = 'msg ' + (j.ok ? 'ok' : 'err');
     setTimeout(load, 3000);
   } catch (e) { msg.textContent = 'Failed: ' + e.message; msg.className = 'msg err'; }
 }
 function openTailscaleApp() {
-  if (window.state && window.state.tailscaleIP) {
+  if (state && state.tailscaleIP) {
     window.open('http://login.tailscale.com/admin/machines', '_blank');
   } else {
-    // Try launching the local app / CLI
-    fetch('/api/tailscale/up', { method: 'POST', headers: { Authorization: 'Bearer ' + new URLSearchParams(location.search).get('token') } })
+    fetch('/api/tailscale/up', { method: 'POST', headers: { Authorization: 'Bearer ' + tokenParam } })
       .then(r => r.json()).then(j => {
         document.getElementById('tsMsg').textContent = j.message;
         document.getElementById('tsMsg').className = 'msg ' + (j.ok ? 'ok' : 'err');

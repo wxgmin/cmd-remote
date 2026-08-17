@@ -1,7 +1,7 @@
 {
   "name": "Command Code Remote",
   "short_name": "Cmd Remote",
-  "description": "Run Command Code from your phone — full terminal and chat on your PC",
+  "description": "Run Command Code from your phone. Full terminal and chat on your PC",
   "start_url": "/?source=pwa",
   "display": "standalone",
   "background_color": "#0b0d12",

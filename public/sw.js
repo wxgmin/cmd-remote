@@ -1,5 +1,5 @@
 // Service worker: cache static assets for PWA installability.
-// Never cache HTML or auth-gated pages — always network-first for those.
+// Never cache HTML or auth-gated pages. Always network-first for those.
 const CACHE = 'cmd-remote-v2';
 // Immutable-ish static assets only (no HTML, no API).
 const SHELL = ['/manifest.json', '/icon.svg', '/icon-192.png', '/icon-512.png', '/xterm.css', '/xterm.js', '/fit.js'];

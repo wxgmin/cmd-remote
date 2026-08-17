@@ -136,14 +136,13 @@ app.get('/panel', (req, res) => {
 app.use(express.static(PUBLIC_DIR, { index: false }));
 
 app.get('/api/status', (req, res) => {
+  if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
   res.json({ ok: true, tokenRequired: !!TOKEN, workDir: WORK_DIR });
 });
 
 // --- Control panel data ---
 // mode: 'auto' (tailscale if up, else LAN) | 'tailscale' | 'local'
-app.get('/api/panel', async (req, res) => {
-  if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
-  const mode = req.query.mode === 'tailscale' || req.query.mode === 'local' ? req.query.mode : 'auto';
+async function buildPanelData(mode) {
   const nets = os.networkInterfaces();
   const lan = [];
   let tsIp = null;
@@ -219,7 +218,7 @@ app.get('/api/panel', async (req, res) => {
     };
   }
 
-  res.json({
+  return {
     token,
     workDir: WORK_DIR,
     ports: { chat: 8787, terminal: 8788 },
@@ -231,7 +230,71 @@ app.get('/api/panel', async (req, res) => {
     best: bestHost ? { name: bestName, host: bestHost, payload: modes[Object.keys(modes).find((k) => modes[k].host === bestHost)] || modes[Object.keys(modes)[0]] } : null,
     modes,
     hosts: hosts.map((h) => h.name),
-  });
+  };
+}
+
+app.get('/api/panel', async (req, res) => {
+  if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
+  const mode = req.query.mode === 'tailscale' || req.query.mode === 'local' ? req.query.mode : 'auto';
+  try {
+    res.json(await buildPanelData(mode));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Server-rendered panel for the desktop app's embedded WebBrowser (no JS needed).
+app.get('/panel/embed', async (req, res) => {
+  if (!authOk(req)) return res.status(401).send('Unauthorized');
+  const mode = req.query.mode === 'tailscale' || req.query.mode === 'local' ? req.query.mode : 'auto';
+  let d;
+  try { d = await buildPanelData(mode); }
+  catch (e) { return res.status(500).send('<h2>Could not load panel</h2>'); }
+  const p = d.best?.payload || d.modes[Object.keys(d.modes)[0]];
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const qr = p ? (p.qrBrowser || p.qrDeep || '') : '';
+  const best = d.best ? d.best.host : (d.lan[0] || 'localhost');
+  res.send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Cmd Remote Control Panel</title>
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<style>
+  body { font-family: "Segoe UI", Arial, sans-serif; background: #fafafa; color: #111827; margin: 0; padding: 20px; }
+  h1 { font-size: 20px; margin: 0 0 4px 0; }
+  .sub { color: #6b7280; font-size: 13px; margin-bottom: 18px; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 10px 0; }
+  .row { padding: 6px 0; border-bottom: 1px solid #f3f4f6; font-size: 13px; }
+  .row:last-child { border-bottom: none; }
+  .row b { color: #6b7280; display: inline-block; width: 130px; font-weight: 500; }
+  .row code { font-family: Consolas, monospace; word-break: break-all; }
+  .qr { text-align: center; margin: 10px 0; }
+  .qr img { width: 200px; height: 200px; border: 1px solid #e5e7eb; border-radius: 10px; }
+  .ok { color: #16a34a; font-weight: 600; }
+  .note { color: #6b7280; font-size: 12px; margin-top: 14px; }
+</style></head>
+<body>
+  <h1>Cmd Remote Control Panel</h1>
+  <div class="sub">Everything your phone needs to connect to this PC</div>
+  <div class="card">
+    <h2>Scan with your phone</h2>
+    <div class="qr"><img src="${qr}" alt="QR code"></div>
+    <div class="row"><b>Phone URL</b><code>${esc(p ? p.browserUrl : '')}</code></div>
+  </div>
+  <div class="card">
+    <h2>Server address</h2>
+    <div class="row"><b>Best for phone</b><code>${esc(p ? p.server : '')}</code></div>
+    <div class="row"><b>On this PC</b><code>http://localhost:8788/?token=${esc(d.token)}</code></div>
+    ${d.lan.length ? `<div class="row"><b>Home Wi-Fi</b><code>http://${esc(d.lan[0])}:8788/?token=${esc(d.token)}</code></div>` : ''}
+    ${d.tailscaleIP ? `<div class="row"><b>Anywhere</b><code>http://${esc(d.tailscaleIP)}:8788/?token=${esc(d.token)}</code></div>` : ''}
+    ${d.magicDNS ? `<div class="row"><b>MagicDNS</b><code>http://${esc(d.magicDNS)}:8788/?token=${esc(d.token)}</code></div>` : ''}
+  </div>
+  <div class="card">
+    <h2>Access token</h2>
+    <div class="row"><b>Token</b><code>${esc(d.token)}</code></div>
+    <div class="note">Keep this secret. Anyone with it can control this PC.</div>
+  </div>
+  <div class="note">Status: <span class="ok">Online</span> · Best host: ${esc(best)}</div>
+</body></html>`);
 });
 
 // --- Tailscale: bring the tailnet up (best-effort) ---
