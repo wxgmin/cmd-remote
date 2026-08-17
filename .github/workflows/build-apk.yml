@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Installers
 
 on:
   push:
@@ -10,9 +10,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  android-apk:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -34,16 +33,59 @@ jobs:
         working-directory: android
         run: gradle :app:assembleDebug --no-daemon
 
+      - name: Rename APK
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$VERSION" = "$GITHUB_REF_NAME" ]; then VERSION="1.0.0"; fi
+          cp android/app/build/outputs/apk/debug/app-debug.apk "CmdRemote-Android-${VERSION}.apk"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cmd-remote-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: CmdRemote-Android
+          path: CmdRemote-Android-*.apk
           if-no-files-found: error
 
       - name: Attach to release (tagged only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: android/app/build/outputs/apk/debug/app-debug.apk
+          files: CmdRemote-Android-*.apk
+          generate_release_notes: true
+
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          winget install --id NSIS.NSIS --accept-source-agreements --accept-package-agreements --silent
+          echo "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Build NSIS installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\NSIS\makensis.exe" installer.nsi
+
+      - name: Rename installer
+        shell: pwsh
+        run: |
+          $ver = $env:GITHUB_REF_NAME -replace '^v',''
+          if ($ver -eq $env:GITHUB_REF_NAME) { $ver = "1.0.0" }
+          Get-ChildItem CmdRemote-Setup-*.exe | Rename-Item -NewName "CmdRemote-Windows-${ver}.exe"
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CmdRemote-Windows
+          path: CmdRemote-Windows-*.exe
+          if-no-files-found: error
+
+      - name: Attach to release (tagged only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: CmdRemote-Windows-*.exe
           generate_release_notes: true

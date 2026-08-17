@@ -6,5 +6,7 @@ node_modules/
 # Local TLS certs (personal, machine-specific)
 tls/
 
-# Generated icon artifacts stay, but keep the generator script
-commit-msg.txt
+# Locally-built installers (CI builds these)
+CmdRemote-Setup-*.exe
+CmdRemote-Windows-*.exe
+CmdRemote-Android-*.apk

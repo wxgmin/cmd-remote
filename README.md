@@ -8,6 +8,21 @@ No open ports, no cloud dependency — your PC does all the work.
 
 ![terminal](https://img.shields.io/badge/terminal-xterm.js-4f8cff) ![stack](https://img.shields.io/badge/stack-node.js%20%2B%20node--pty-7c5cff)
 
+## Download
+
+| Platform | Installer | What it does |
+|---|---|---|
+| 📱 **Android** | [`CmdRemote-Android.apk`](https://github.com/wxgmin/cmd-remote/releases/latest) | Native app — settings screen for server URL + token, opens the full terminal |
+| 🖥️ **Windows** | [`CmdRemote-Windows.exe`](https://github.com/wxgmin/cmd-remote/releases/latest) | One-click installer — installs to `%LOCALAPPDATA%`, checks/installs Node.js, runs setup, creates Start Menu + desktop shortcuts |
+
+**Latest release:** https://github.com/wxgmin/cmd-remote/releases/latest
+(Both installers are built automatically in CI and attached to every `v*` release tag.)
+
+- **Android:** allow "Install unknown apps", open the APK, install, enter your PC's
+  Tailscale URL + token on first launch.
+- **Windows:** run the .exe, follow the wizard — it checks for Node.js (installs it if
+  missing), copies the app, runs the one-command setup, and creates shortcuts.
+
 ## What you get
 
 | | Full Terminal (port 8788) | Chat UI (port 8787) |
@@ -30,9 +45,8 @@ A small native Android app wraps the terminal so it feels like a real app, not a
 tab. It has a settings screen (server address + token, saved locally) and opens the full
 terminal in a WebView.
 
-- **Download:** grab the `cmd-remote-apk` artifact from the latest
-  [GitHub Actions run](https://github.com/wxgmin/cmd-remote/actions) (Actions → build →
-  Artifacts), or from a tagged release (`v*` tags attach the APK to Releases automatically).
+- **Download:** [`CmdRemote-Android.apk`](https://github.com/wxgmin/cmd-remote/releases/latest)
+  from the latest release.
 - **Install:** allow "Install unknown apps" for your browser/downloads app, open the APK,
   install, then enter your PC's Tailscale URL + token on first launch.
 - **Build it yourself:** push a tag (`git tag v1.0.0 && git push origin v1.0.0`) and the
@@ -40,6 +54,19 @@ terminal in a WebView.
 
 > Note: the app uses `usesCleartextTraffic=true` so it works over plain HTTP on your
 > tailnet. If you later enable HTTPS via `tailscale cert`, that stays working too.
+
+## Windows installer (EXE)
+
+A one-click NSIS installer wraps the whole app:
+
+- Installs to `%LOCALAPPDATA%\CmdRemote` (no admin needed)
+- Checks for Node.js — if missing, offers to install it via winget
+- Runs the one-command setup (deps, token, Tailscale, firewall, servers)
+- Creates Start Menu + desktop shortcuts
+- Registers in Add/Remove Programs (with uninstaller)
+
+- **Download:** [`CmdRemote-Windows.exe`](https://github.com/wxgmin/cmd-remote/releases/latest)
+  from the latest release.
 
 ## Quick start
 
