@@ -35,8 +35,8 @@ port 8788, chat UI on port 8787). When a user asks you to "set this up", "instal
    - The **Anywhere/MagicDNS URL** for port 8788 (the full terminal) plus the token,
      or point them to the URL line — they open it on their phone.
    - The **Android APK** is on GitHub Releases:
-     https://github.com/wxgmin/cmd-remote/releases (asset `app-debug.apk`). The app asks
-     for the server URL and token on first launch.
+     https://github.com/wxgmin/cmd-remote/releases (asset `CmdRemote-Android-<ver>.apk`).
+     The app asks for the server URL and token on first launch.
 2. **Health check**: verify the servers respond:
    ```
    curl -s http://localhost:8787/api/status
@@ -44,6 +44,38 @@ port 8788, chat UI on port 8787). When a user asks you to "set this up", "instal
    Expect `{"ok":true,...}`. Ports: chat proxy 8787, terminal 8788.
 3. If the phone will connect from anywhere, ensure the PC and phone are on the **same
    Tailscale tailnet** (same account or shared tailnet). The phone needs the Tailscale app.
+
+## Installing by pointing Command Code at this repo
+
+If an agent is already running on the PC (e.g. this very Command Code session) and the user
+wants cmd-remote installed, you can set it up from the repo itself:
+
+1. Clone + install + start:
+   ```
+   git clone https://github.com/wxgmin/cmd-remote.git
+   cd cmd-remote
+   npm install
+   npm run setup
+   ```
+   (`npm run setup` runs `node setup.mjs` — installs deps, sets up Tailscale, generates a
+   token in `.env` if none exists, adds firewall rules, and starts both servers detached.)
+
+2. **Read the token and URL to give the user** (the values they type/scan into the mobile
+   app). After setup, get the token from the server's own panel endpoint:
+   ```
+   curl -s http://localhost:8787/api/panel | <parse "token" and "browserUrl">
+   ```
+   Or read the console output the setup printed (it prints `Phone URL (LAN)` /
+   `ANYWHERE (Tailscale)` lines containing `?token=...`).
+   - The **token** is the `?token=` value from those URLs (also in `.env` as
+     `CMD_REMOTE_TOKEN`).
+   - The **URL** the user enters in the mobile app is the full `browserUrl`
+     (e.g. `http://100.125.35.110:8788/?token=<token>`) — or just the
+     `http://<host>:8788` base and the token separately; the Android app accepts both.
+   - Give the user BOTH the URL line AND the token explicitly — do not make them
+     grep `.env` or the logs themselves.
+3. For a phone on the same Wi-Fi, the LAN URL works immediately. For anywhere-access,
+   the user must be signed into the same Tailscale tailnet on the phone.
 
 ## Rules
 
