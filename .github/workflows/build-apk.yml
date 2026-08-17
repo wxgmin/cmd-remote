@@ -52,6 +52,9 @@ jobs:
         with:
           files: CmdRemote-Android-*.apk
           generate_release_notes: true
+        # GitHub API is occasionally flaky (503). The release + artifact
+        # upload are best-effort: a failed attach can be re-run manually.
+        continue-on-error: true
 
   windows-installer:
     runs-on: windows-latest
@@ -89,3 +92,5 @@ jobs:
         with:
           files: CmdRemote-Windows-*.exe
           generate_release_notes: true
+        # Best-effort: GitHub API can be flaky (503); re-run manually if needed.
+        continue-on-error: true
