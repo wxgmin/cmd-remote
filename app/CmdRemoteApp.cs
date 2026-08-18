@@ -8,6 +8,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 
@@ -15,6 +16,13 @@ namespace CmdRemoteApp
 {
     public class MainForm : Form
     {
+        // Keep the PC awake so the phone can always reach it.
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern uint SetThreadExecutionState(uint esFlags);
+        private const uint ES_CONTINUOUS = 0x80000000;
+        private const uint ES_SYSTEM_REQUIRED = 0x00000001;
+        private const uint ES_DISPLAY_REQUIRED = 0x00000002;
+
         private static readonly Color Accent = Color.FromArgb(37, 99, 235);
         private static readonly Color Green = Color.FromArgb(22, 163, 74);
         private static readonly Color Red = Color.FromArgb(220, 38, 38);
@@ -36,7 +44,9 @@ namespace CmdRemoteApp
         private readonly TabControl tabs;
         private readonly WebBrowser panelBrowser;
         private readonly System.Windows.Forms.Timer healthTimer;
+        private readonly NotifyIcon trayIcon;
         private bool starting = false;
+        private bool exiting = false;
 
         public MainForm()
         {
@@ -47,6 +57,40 @@ namespace CmdRemoteApp
             MinimumSize = new Size(680, 560);
             BackColor = Bg;
             Font = new Font("Segoe UI", 10F);
+
+            // Keep the PC awake while this app runs (phone must always reach it).
+            SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
+
+            // System tray: minimize to tray, restore on double-click, Exit menu.
+            trayIcon = new NotifyIcon
+            {
+                Icon = System.Drawing.SystemIcons.Application,
+                Text = "Cmd Remote - always online",
+                Visible = true,
+            };
+            var trayMenu = new ContextMenuStrip();
+            trayMenu.Items.Add("Open Cmd Remote", null, (s, e) => RestoreFromTray());
+            trayMenu.Items.Add("Check status now", null, (s, e) => SyncServers());
+            trayMenu.Items.Add(new ToolStripSeparator());
+            trayMenu.Items.Add("Exit", null, (s, e) => { exiting = true; trayIcon.Visible = false; Application.Exit(); });
+            trayIcon.ContextMenuStrip = trayMenu;
+            trayIcon.DoubleClick += (s, e) => RestoreFromTray();
+            Resize += (s, e) => { if (WindowState == FormWindowState.Minimized) HideToTray(); };
+            FormClosing += (s, e) =>
+            {
+                if (!exiting && e.CloseReason == CloseReason.UserClosing)
+                {
+                    // Closing the window just hides to tray — keep serving.
+                    e.Cancel = true;
+                    HideToTray();
+                    return;
+                }
+                healthTimer.Stop();
+                SetThreadExecutionState(ES_CONTINUOUS);
+            };
+
+            // Auto-start with Windows so it's always available after reboot.
+            EnsureAutostart();
 
             // Header
             var header = new Panel { Dock = DockStyle.Top, Height = 62, BackColor = HeaderBg };
@@ -91,7 +135,7 @@ namespace CmdRemoteApp
             var helpLabel = new Label
             {
                 Text = "How to connect from your phone\n" +
-                       "1. Keep this app open. It runs the connection for you.\n" +
+                       "1. Keep this app running - it stays in the tray.\n" +
                        "2. On your phone, open the Cmd Remote app.\n" +
                        "3. Scan the QR code above. The app connects automatically.\n" +
                        "4. Away from home? Open the Control Panel tab and use the Tailscale button.",
@@ -119,13 +163,57 @@ namespace CmdRemoteApp
 
             tabs.SelectedIndexChanged += (s, e) => { if (tabs.SelectedIndex == 1) LoadPanel(); };
 
-            // Auto-manage servers in the background
+            // Auto-manage servers in the background (watchdog).
             healthTimer = new System.Windows.Forms.Timer { Interval = 4000 };
-            healthTimer.Tick += (s, e) => { if (!starting) SyncServers(); };
+            healthTimer.Tick += (s, e) => { if (!starting && !exiting) SyncServers(); };
             healthTimer.Start();
 
-            Shown += (s, e) => { EnsureToken(); SyncServers(); RefreshQr(); };
-            FormClosing += (s, e) => { healthTimer.Stop(); };
+            Shown += (s, e) => { EnsureToken(); EnsureTailscale(); SyncServers(); RefreshQr(); };
+        }
+
+        private void RestoreFromTray()
+        {
+            Show();
+            WindowState = FormWindowState.Normal;
+            BringToFront();
+            Activate();
+        }
+        private void HideToTray()
+        {
+            Hide();
+            if (trayIcon != null) trayIcon.ShowBalloonTip(1500, "Cmd Remote still running", "Servers stay online. Double-click the tray icon to open.", ToolTipIcon.Info);
+        }
+
+        // Register in the Startup registry so it launches at login.
+        private void EnsureAutostart()
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true))
+                {
+                    if (key != null)
+                        key.SetValue("CmdRemote", "\"" + Application.ExecutablePath + "\"");
+                }
+            }
+            catch { }
+        }
+
+        // Bring the tailnet up if Tailscale is installed but down.
+        private void EnsureTailscale()
+        {
+            try
+            {
+                var ts = @"C:\Program Files\Tailscale\tailscale.exe";
+                if (!File.Exists(ts)) return;
+                using (var p = Process.Start(new ProcessStartInfo(ts, "status") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true }))
+                {
+                    if (p != null && p.StandardOutput.ReadToEnd().Contains("stopped"))
+                    {
+                        Process.Start(new ProcessStartInfo(ts, "up") { UseShellExecute = false, CreateNoWindow = true });
+                    }
+                }
+            }
+            catch { }
         }
 
         private void DrawLogo(Panel p, Graphics g)
@@ -199,8 +287,17 @@ namespace CmdRemoteApp
                     RefreshQr();
                     return;
                 }
+                // Servers are up but reject our token — likely started by
+                // something else with a different .env. Restart them to match.
                 SetStatus("Fixing connection...", "Restarting the servers to match this app.", Amber);
                 KillNodeServers();
+                System.Threading.Thread.Sleep(600);
+            }
+            else if (chat != tty)
+            {
+                // One server died — restart only the missing one.
+                SetStatus("Restoring...", "One server stopped. Bringing it back.", Amber);
+                KillNodeServers(); // restart both for consistency (shared token/env)
                 System.Threading.Thread.Sleep(600);
             }
             StartServers();
