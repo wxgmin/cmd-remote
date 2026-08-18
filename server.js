@@ -11,6 +11,7 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { tailscaleIP, tailscaleTLS, lanIPs } from './lib/util.mjs';
 import { browserRouter, startSharedBrowser } from './browser-server.mjs';
+import { fsApiRouter } from './lib/fs-api.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -133,6 +134,17 @@ app.get('/', (req, res) => {
 app.get('/panel', (req, res) => {
   if (!authOk(req)) return res.status(401).send('Unauthorized');
   res.sendFile(path.join(PUBLIC_DIR, 'panel.html'));
+});
+// Never cache HTML pages — the phone must always get the latest UI.
+app.use((req, res, next) => {
+  // Keep the token out of referrer headers on any navigation.
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  if (req.path.endsWith('.html') || req.path === '/' || req.path === '/panel' || req.path === '/files' || req.path === '/browser') {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+  next();
 });
 app.use(express.static(PUBLIC_DIR, { index: false }));
 app.use('/api/browser', browserRouter(authOk));
@@ -408,144 +420,8 @@ app.get('/api/sync/session/:id', (req, res) => {
   res.json({ id, messages });
 });
 
-// --- File browser (view-only): whitelisted roots, safe path resolution ---
-const OBSIDIAN_VAULT = path.join(os.homedir(), 'Documents', 'Obsidian Vault');
-function fsRoots() {
-  // Roots the phone may browse. Always: working dir, agent session projects,
-  // and the Obsidian vault (if it exists).
-  const roots = [WORK_DIR, PROJECTS_DIR];
-  try { if (fs.existsSync(OBSIDIAN_VAULT)) roots.push(OBSIDIAN_VAULT); } catch {}
-  return roots.map((r) => path.resolve(r));
-}
-function isInsideRoots(abs) {
-  const roots = fsRoots();
-  return roots.some((r) => abs === r || abs.startsWith(r + path.sep));
-}
-function safeFsPath(reqPath) {
-  if (typeof reqPath !== 'string' || !reqPath) return null;
-  const abs = path.resolve(reqPath);
-  if (!isInsideRoots(abs)) return null;
-  try {
-    const real = fs.realpathSync(abs);
-    if (!isInsideRoots(real)) return null;
-    return real;
-  } catch {
-    return null; // nonexistent or unresolvable
-  }
-}
-
-app.get('/api/fs/list', (req, res) => {
-  if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
-  const p = safeFsPath(req.query.path || WORK_DIR);
-  if (!p) return res.status(403).json({ error: 'Path not allowed' });
-  let entries;
-  try {
-    entries = fs.readdirSync(p, { withFileTypes: true }).map((d) => {
-      const full = path.join(p, d.name);
-      let size = 0, mtime = null;
-      try {
-        const st = fs.statSync(full);
-        size = d.isDirectory() ? 0 : st.size;
-        mtime = st.mtime.toISOString();
-      } catch {}
-      return { name: d.name, type: d.isDirectory() ? 'dir' : 'file', size, mtime };
-    });
-  } catch (e) {
-    return res.status(500).json({ error: 'Cannot read directory: ' + e.message });
-  }
-  entries.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1));
-  res.json({ path: p, roots: fsRoots(), entries });
-});
-
-// Text/image/file content, capped to keep the phone happy.
-const TEXT_EXT = new Set(['.md', '.txt', '.js', '.mjs', '.ts', '.py', '.json', '.html', '.css', '.yml', '.yaml', '.xml', '.log', '.csv', '.ini', '.cfg', '.toml', '.sh', '.bat', '.cmd', '.cs', '.java', '.rs', '.go', '.c', '.h', '.cpp', '.env.example', '.gitignore', '']);
-const IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.bmp', '.ico']);
-// Binary-ish types the phone previews client-side (SheetJS parses xlsx; the
-// browser renders PDFs natively). Streamed as octet-stream with a size cap.
-const BIN_EXT = new Set(['.xlsx', '.xls', '.tsv', '.pdf', '.docx', '.doc', '.pptx', '.zip', '.tar', '.gz']);
-app.get('/api/fs/file', (req, res) => {
-  if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
-  const p = safeFsPath(req.query.path);
-  if (!p) return res.status(403).json({ error: 'Path not allowed' });
-  let st;
-  try { st = fs.statSync(p); } catch { return res.status(404).json({ error: 'not found' }); }
-  if (st.isDirectory()) return res.status(400).json({ error: 'is a directory' });
-  const ext = path.extname(p).toLowerCase();
-  try {
-    if (IMG_EXT.has(ext)) {
-      if (st.size > 5 * 1024 * 1024) return res.status(413).json({ error: 'image too large' });
-      const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.bmp': 'image/bmp', '.ico': 'image/x-icon' }[ext] || 'application/octet-stream';
-      res.setHeader('Content-Type', mime);
-      fs.createReadStream(p).pipe(res);
-      return;
-    }
-    if (TEXT_EXT.has(ext)) {
-      if (st.size > 1024 * 1024) return res.status(413).json({ error: 'file too large to preview' });
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      fs.createReadStream(p).pipe(res);
-      return;
-    }
-    if (BIN_EXT.has(ext)) {
-      // SheetJS needs the raw bytes; PDF needs the raw bytes for the viewer.
-      const cap = ext === '.pdf' ? 20 * 1024 * 1024 : 10 * 1024 * 1024;
-      if (st.size > cap) return res.status(413).json({ error: 'file too large to open' });
-      const mime = { '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xls': 'application/vnd.ms-excel', '.tsv': 'text/tab-separated-values', '.pdf': 'application/pdf' }[ext] || 'application/octet-stream';
-      res.setHeader('Content-Type', mime);
-      fs.createReadStream(p).pipe(res);
-      return;
-    }
-    res.status(415).json({ error: 'preview not available', name: path.basename(p), size: st.size });
-  } catch (e) {
-    res.status(500).json({ error: 'Cannot read file: ' + e.message });
-  }
-});
-
-// Obsidian vault info: tells the Files page where the vault is.
-app.get('/api/obsidian/vault', (req, res) => {
-  if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
-  res.json({ vault: fs.existsSync(OBSIDIAN_VAULT) ? OBSIDIAN_VAULT : null });
-});
-
-// Vault search: server-side scan of the vault (filename + text content).
-// No Obsidian plugin dependency — works even if Obsidian is closed.
-app.get('/api/obsidian/search', (req, res) => {
-  if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
-  const q = String(req.query.q || '').trim().toLowerCase();
-  if (!q) return res.status(400).json({ error: 'q required' });
-  if (!fs.existsSync(OBSIDIAN_VAULT)) return res.json({ available: false, error: 'vault not found' });
-  const results = [];
-  const walk = (dir, rel) => {
-    let items;
-    try { items = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const d of items) {
-      if (d.name.startsWith('.')) continue; // skip .obsidian etc.
-      const full = path.join(dir, d.name);
-      const r = rel ? rel + '/' + d.name : d.name;
-      if (d.isDirectory()) { walk(full, r); continue; }
-      if (d.name.toLowerCase().includes(q)) {
-        let size = 0;
-        try { size = fs.statSync(full).size; } catch {}
-        results.push({ filename: r, result: d.name, size });
-      }
-      // Also search inside markdown/text files (cap at 500 KB each).
-      const ext = path.extname(d.name).toLowerCase();
-      if (['.md', '.txt'].includes(ext)) {
-        try {
-          if (fs.statSync(full).size <= 500 * 1024) {
-            const content = fs.readFileSync(full, 'utf8');
-            if (content.toLowerCase().includes(q)) {
-              const idx = content.toLowerCase().indexOf(q);
-              const snippet = content.slice(Math.max(0, idx - 40), idx + 80).replace(/\s+/g, ' ').trim();
-              results.push({ filename: r, result: snippet, size: content.length });
-            }
-          }
-        } catch {}
-      }
-    }
-  };
-  walk(OBSIDIAN_VAULT, '');
-  res.json({ available: true, results: results.slice(0, 50) });
-});
+// --- File browser + Obsidian (shared router, also mounted on tty-server) ---
+app.use(fsApiRouter({ authOk, workDir: WORK_DIR, projectsDir: PROJECTS_DIR }));
 
 // --- Management: run CLI subcommands and return output ---
 // Read-only whitelist: the first arg must be a safe subcommand AND the rest of

@@ -76,6 +76,7 @@ Section "Install"
   ; Core server files
   File "server.js"
   File "tty-server.mjs"
+  File "browser-server.mjs"
   File "setup.mjs"
   File "tls-setup.mjs"
   File "package.json"
@@ -92,6 +93,7 @@ Section "Install"
   ; lib + public + scripts
   SetOutPath "$INSTDIR\lib"
   File "lib\util.mjs"
+  File "lib\fs-api.mjs"
 
   SetOutPath "$INSTDIR\public"
   File /r "public\*.*"

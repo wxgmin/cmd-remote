@@ -223,25 +223,16 @@ export function browserRouter(authOk) {
     }
   });
 
-  // Open a new tab in the shared browser (via window.open — reliable in Edge).
+  // Open a new tab in the shared browser (via CDP /json/new — returns the
+  // exact target id, no guessing which tab was created).
   r.post('/newtab', async (req, res) => {
     if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
     const { url } = req.body || {};
     await startSharedBrowser();
     try {
-      const list = await cdpFetch('/json/list');
-      const any = (list || []).find((t) => t.type === 'page');
-      if (!any) return res.status(404).json({ error: 'no browser tab available' });
       const target = url || 'about:blank';
-      const result = await cdpCommand(tabWsUrl(any), 'Runtime.evaluate', {
-        expression: `window.open(${JSON.stringify(target)}, '_blank'); 'ok'`,
-      });
-      // Find the newly created tab (last one).
-      await new Promise((r2) => setTimeout(r2, 600));
-      const list2 = await cdpFetch('/json/list');
-      const pages = (list2 || []).filter((t) => t.type === 'page');
-      const t = pages[pages.length - 1];
-      res.json({ ok: true, id: t ? t.id : null });
+      const t = await cdpFetch('/json/new?' + (url ? 'url=' + encodeURIComponent(target) : ''));
+      res.json({ ok: true, id: t.id });
     } catch (e) {
       res.status(502).json({ error: e.message });
     }

@@ -85,8 +85,32 @@
     position: relative;
   }
   .xterm { height: 100%; }
-  /* Thin scrollbar for the terminal viewport (desktop + mobile) */
-  .xterm .xterm-viewport { scrollbar-width: thin; }
+  /* Hide the native PC scrollbar — replaced by the gesture scrub strip */
+  .xterm .xterm-viewport { scrollbar-width: none; }
+  .xterm .xterm-viewport::-webkit-scrollbar { display: none; width: 0; }
+  /* Gesture scrub strip (same pattern as files.html/browser.html) */
+  .gstrip {
+    position: absolute;
+    top: 0; right: 0; bottom: 0;
+    width: 36px;
+    touch-action: none;
+    z-index: 5;
+    cursor: pointer;
+  }
+  .gstrip .gthumb {
+    position: absolute; right: 4px; width: 8px; border-radius: 4px;
+    background: rgba(139, 92, 246, 0.55); min-height: 30px;
+    opacity: 0; transition: opacity .15s ease; pointer-events: none;
+  }
+  .gstrip:active .gthumb, .gstrip:hover .gthumb { opacity: 1; }
+  .gstrip.dragging { background: rgba(139,92,246,.07); }
+  .gstrip .gline {
+    position: absolute; left: 0; right: 0; height: 2px;
+    background: rgba(139,92,246,.4); pointer-events: none; opacity: 0;
+  }
+  .gstrip.dragging .gline { opacity: 1; }
+  /* Pause output button state */
+  #kPause.latched { background: linear-gradient(135deg, #ff6b81, #f59e0b); border-color: transparent; color: #fff; }
   /* Tab bar */
   #tabbar {
     display: flex;
@@ -242,6 +266,7 @@
   <span class="sep"></span>
   <button id="kEnter" title="Enter">↵</button>
   <span class="sep"></span>
+  <button id="kPause" title="Pause output (stop the flood so you can read)">⏸</button>
   <button id="kbBtn" title="Show / hide keyboard">⌨</button>
   <button id="kbLock" title="Lock keyboard: never auto-open">🔒</button>
 </div>
@@ -286,15 +311,24 @@
     if (viewport) viewport.scrollTop = viewport.scrollHeight;
   });
 
-  // --- Scrolling: native touch scroll (xterm's viewport handles momentum on
-  // touch), auto-stick to the bottom while output streams, free scroll-up.
+  // --- Scrolling: native momentum touch scroll + gesture scrub strip,
+  // auto-stick to the bottom while output streams (rAF-coalesced),
+  // free scroll-up, pause button to stop the flood.
   const viewport = termEl.querySelector('.xterm-viewport');
   let stickToBottom = true;
+  let followRaf = null;
   function atBottom() {
     return !viewport || viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 8;
   }
   function scrollToLatest() {
-    if (viewport) viewport.scrollTop = viewport.scrollHeight;
+    if (!viewport) return;
+    // Coalesce: never scroll synchronously per write; schedule once per frame.
+    if (followRaf) return;
+    followRaf = requestAnimationFrame(() => {
+      followRaf = null;
+      viewport.scrollTop = viewport.scrollHeight;
+      refreshScrollHint();
+    });
   }
   function refreshScrollHint() {
     const near = atBottom();
@@ -302,13 +336,106 @@
     if (near) stickToBottom = true;
   }
   if (viewport) {
-    // User-initiated scroll: stay put (stick-to-bottom re-engages at the bottom).
+    // User-initiated scroll: stay put (stick-to-bottom re-engages only at
+    // the actual bottom — a tap that doesn't scroll never disengages it).
     viewport.addEventListener('scroll', () => {
       stickToBottom = atBottom();
       refreshScrollHint();
     }, { passive: true });
-    viewport.addEventListener('touchstart', () => { stickToBottom = false; }, { passive: true });
   }
+
+  // ---- Gesture scrub strip (wide, touch-friendly, replaces the PC bar) ----
+  const gstrip = document.createElement('div');
+  gstrip.className = 'gstrip';
+  const gthumb = document.createElement('div');
+  gthumb.className = 'gthumb';
+  const gline = document.createElement('div');
+  gline.className = 'gline';
+  gstrip.appendChild(gthumb);
+  gstrip.appendChild(gline);
+  termEl.appendChild(gstrip); // anchored inside #term, below the header
+  let gDragging = false;
+  function gUpdateThumb() {
+    if (!viewport) return;
+    const max = viewport.scrollHeight - viewport.clientHeight;
+    const ratio = max > 0 ? viewport.scrollTop / max : 0;
+    const h = Math.max(30, viewport.clientHeight * (viewport.clientHeight / viewport.scrollHeight));
+    gthumb.style.height = h + 'px';
+    gthumb.style.top = (ratio * (viewport.clientHeight - h)) + 'px';
+  }
+  function gScrollToFinger(y) {
+    if (!viewport) return;
+    const rect = gstrip.getBoundingClientRect();
+    const max = viewport.scrollHeight - viewport.clientHeight;
+    if (max <= 0) return;
+    const ratio = Math.min(1, Math.max(0, (y - rect.top) / rect.height));
+    viewport.scrollTop = ratio * max;
+    stickToBottom = ratio >= 0.98;
+    gline.style.top = (y - rect.top) + 'px';
+    gUpdateThumb();
+  }
+  gstrip.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    gDragging = true;
+    gstrip.classList.add('dragging');
+    gScrollToFinger(e.touches[0].clientY);
+  }, { passive: false });
+  gstrip.addEventListener('touchmove', (e) => {
+    if (!gDragging) return;
+    e.preventDefault();
+    gScrollToFinger(e.touches[0].clientY);
+  }, { passive: false });
+  gstrip.addEventListener('touchend', () => {
+    gDragging = false;
+    gstrip.classList.remove('dragging');
+    refreshScrollHint();
+  });
+  gstrip.addEventListener('mousedown', (e) => {
+    gDragging = true;
+    gstrip.classList.add('dragging');
+    gScrollToFinger(e.clientY);
+    const move = (ev) => gScrollToFinger(ev.clientY);
+    const up = () => { gDragging = false; gstrip.classList.remove('dragging'); refreshScrollHint(); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+  viewport.addEventListener('scroll', gUpdateThumb, { passive: true });
+
+  // ---- Pause output: buffer incoming writes while ON so the user can
+  // read; resume flushes the buffer. Auto-engages when scrolling up. ----
+  const pauseBtn = document.getElementById('kPause');
+  let paused = false;
+  let pauseBuf = '';
+  let pauseFlushTimer = null;
+  // rAF-coalesced output writes (declared here; used in onmessage).
+  const origWrite = term.write.bind(term);
+  let writeQueue = '';
+  let writeRaf = null;
+  function setPaused(v) {
+    paused = v;
+    pauseBtn.classList.toggle('latched', paused);
+    pauseBtn.textContent = paused ? '⏸ ' + Math.ceil(pauseBuf.length / 1024) + 'K' : '⏸';
+    if (!paused) {
+      // Flush buffered output in one go.
+      const data = pauseBuf;
+      pauseBuf = '';
+      if (data) { origWrite(data); if (stickToBottom) scrollToLatest(); }
+      clearTimeout(pauseFlushTimer);
+      pauseFlushTimer = null;
+    }
+  }
+  pauseBtn.addEventListener('click', () => setPaused(!paused));
+  // Auto-pause: while output is streaming, scrolling up (away from the
+  // bottom) pauses output so the flood can't yank the view around.
+  let outgoingSinceScroll = false;
+  viewport.addEventListener('scroll', () => {
+    gUpdateThumb();
+    if (!paused && !atBottom() && outgoingSinceScroll) {
+      setPaused(true);
+      outgoingSinceScroll = false;
+    }
+  }, { passive: true });
+
   scrollHint.addEventListener('click', () => { stickToBottom = true; scrollToLatest(); refreshScrollHint(); });
 
   // --- Toolbar: arrows / Esc / Tab / Ctrl / Shift send real PTY input ---
@@ -578,8 +705,34 @@
         // Reconcile: server may have assigned a fresh id (server restarted).
         currentTab.session = msg.session;
         saveTabs();
-        if (msg.replay) term.reset();
-      } else if (msg.type === 'output') term.write(msg.data);
+        // Replay: don't wipe scroll if the user was reading — only reset
+        // when they were at the bottom (fresh follow).
+        if (msg.replay) {
+          const wasAtBottom = atBottom();
+          if (wasAtBottom) { term.reset(); stickToBottom = true; }
+          else setPaused(true); // flood protection while reading
+        }
+      } else if (msg.type === 'output') {
+        if (paused) {
+          // Buffer while paused; show live K-badge.
+          pauseBuf += msg.data;
+          pauseBtn.textContent = '⏸ ' + Math.ceil(pauseBuf.length / 1024) + 'K';
+          if (!pauseFlushTimer) pauseFlushTimer = setTimeout(() => setPaused(true), 500); // refresh badge
+          return;
+        }
+        outgoingSinceScroll = true;
+        // rAF-coalesced writes: batch chunks into one write per frame.
+        writeQueue += msg.data;
+        if (!writeRaf) {
+          writeRaf = requestAnimationFrame(() => {
+            writeRaf = null;
+            const data = writeQueue;
+            writeQueue = '';
+            origWrite(data);
+            if (stickToBottom) scrollToLatest();
+          });
+        }
+      }
       else if (msg.type === 'size') {
         try { term.resize(msg.cols, msg.rows); } catch {}
       } else if (msg.type === 'exit') {
@@ -685,12 +838,8 @@
     if (!kbLock) focusTerminal(true);
   });
 
-  // Keep following new output only while the user is at the bottom.
-  const origWrite = term.write.bind(term);
-  term.write = (data) => {
-    origWrite(data);
-    if (stickToBottom) scrollToLatest();
-  };
+  // (Output writes are batched via writeQueue + rAF in onmessage; scroll
+  // follow is rAF-coalesced in scrollToLatest. No per-write override needed.)
 
   // HARD BLOCK when locked: even if the browser/WebView tries to focus
   // xterm's hidden textarea (tap on scrollbar, tap on terminal, etc.), blur

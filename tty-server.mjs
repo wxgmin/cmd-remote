@@ -10,6 +10,8 @@ import os from 'os';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { tailscaleIP, tailscaleTLS, lanIPs } from './lib/util.mjs';
+import { browserRouter, startSharedBrowser } from './browser-server.mjs';
+import { fsApiRouter } from './lib/fs-api.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -56,9 +58,23 @@ app.get('/', (req, res) => {
 });
 // Only static *assets* are public (xterm.js/css, icons, manifest). The HTML
 // pages carry no secrets, but gate them anyway to avoid serving them unauthenticated.
-app.get(['/index.html', '/panel.html', '/tty.html'], (req, res) => {
+app.get(['/index.html', '/panel.html', '/tty.html', '/files.html', '/browser.html'], (req, res) => {
   if (!authOk(req)) return res.status(401).send('Unauthorized');
   res.sendFile(path.join(__dirname, 'public', path.basename(req.path)));
+});
+// Files + Browser APIs on the terminal port too (the phone's app opens 8788).
+app.use(fsApiRouter({ authOk, workDir: WORK_DIR, projectsDir: path.join(os.homedir(), '.commandcode', 'projects') }));
+app.use('/api/browser', browserRouter(authOk));
+// Never cache HTML pages — the phone must always get the latest UI.
+app.use((req, res, next) => {
+  // Keep the token out of referrer headers on any navigation.
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  if (req.path.endsWith('.html') || req.path === '/') {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+  next();
 });
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
@@ -234,6 +250,9 @@ server.listen(PORT, HOST, () => {
   }
   console.log(`  Command Code entry: ${CMD_ENTRY}`);
   console.log(`  Working directory: ${WORK_DIR}`);
+  startSharedBrowser().then((p) => {
+    console.log(p ? '  Shared browser: up (CDP port 9222)' : '  Shared browser: not found — live browser view disabled');
+  });
   if (!TOKEN) {
     console.log('WARNING: No CMD_REMOTE_TOKEN set — anyone who can reach this port can control your PC.');
   }

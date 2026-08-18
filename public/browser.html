@@ -277,7 +277,7 @@
   gline.className = 'gline';
   gstrip.appendChild(gthumb);
   gstrip.appendChild(gline);
-  document.body.appendChild(gstrip);
+  stage.appendChild(gstrip); // anchored inside #stage (position:relative), not over the header
   const gTarget = stage;
   let gDragging = false;
   function gUpdateThumb() {
@@ -310,12 +310,41 @@
 
   async function api(url, opts) {
     const r = await fetch(url, { headers: auth, ...opts });
-    if (r.status === 401) throw new Error('Unauthorized');
+    if (r.status === 401) { showTokenPrompt(); throw new Error('Unauthorized — enter your token'); }
     return r;
   }
   async function post(url, body) {
     const r = await api(url, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    return r.json();
+    return r.json().catch(() => ({}));
+  }
+
+  // ---- Token fallback: if opened without ?token= (e.g. Android WebView
+  // with empty localStorage), prompt for the token instead of a dead end. ----
+  const loginOverlay = document.createElement('div');
+  loginOverlay.style.cssText = 'position:fixed;inset:0;background:rgba(11,13,18,.97);display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:50;padding:24px;color:var(--text)';
+  loginOverlay.innerHTML = '<div style="font-size:15px;font-weight:700">Enter your access token</div>' +
+    '<input id="tokenInput" type="password" placeholder="Token from your PC" autocomplete="off" style="width:100%;max-width:320px;background:rgba(255,255,255,.08);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;padding:12px 14px;outline:none">' +
+    '<button id="tokenBtn" style="border:1px solid var(--border);background:var(--grad);color:#fff;border-radius:10px;padding:12px 26px;font-size:14px;font-weight:700;cursor:pointer">Connect</button>' +
+    '<div id="tokenErr" style="color:var(--error);font-size:12px;min-height:14px"></div>';
+  document.body.appendChild(loginOverlay);
+  function showTokenPrompt() {
+    loginOverlay.style.display = 'flex';
+    const inp = loginOverlay.querySelector('#tokenInput');
+    const btn = loginOverlay.querySelector('#tokenBtn');
+    const err = loginOverlay.querySelector('#tokenErr');
+    btn.onclick = async () => {
+      const t = inp.value.trim();
+      if (!t) { err.textContent = 'Enter the token shown on your PC.'; return; }
+      try {
+        localStorage.setItem('cmd_remote_token', t);
+        const probe = await fetch('/api/browser/tabs', { headers: { Authorization: 'Bearer ' + t } });
+        if (!probe.ok) { err.textContent = 'That token did not work.'; return; }
+        loginOverlay.style.display = 'none';
+        location.reload();
+      } catch { err.textContent = 'Could not reach the server.'; }
+    };
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
+    setTimeout(() => inp.focus(), 50);
   }
 
   function setStatus(text) {
@@ -326,13 +355,14 @@
     try {
       const r = await api('/api/browser/tabs');
       const j = await r.json();
-      if (!j.available) { setStatus('Browser not running'); return; }
+      if (!j.available) { setStatus('Browser not running — tap to retry'); return false; }
       tabs = j.tabs || [];
       if (tabs.length && !tabs.some((t) => t.id === activeTab)) {
         activeTab = tabs[0].id;
       }
       renderTabs();
-    } catch (e) { setStatus('Browser unreachable'); }
+      return true;
+    } catch (e) { setStatus('Browser unreachable'); return false; }
   }
 
   function renderTabs() {
@@ -354,25 +384,45 @@
     tabstrip.appendChild(add);
   }
 
+  let shotBusy = false;
+  let browserDown = false;
   async function refreshShot() {
-    if (!activeTab) { setStatus('No tab selected'); return; }
+    if (shotBusy) return; // never overlap requests
+    if (browserDown) return; // back off when the browser is down
+    if (!activeTab) { setStatus('No browser tabs — the agent may open one'); return; }
     // Preserve the user's scroll position across screenshot refreshes so the
     // view doesn't jump back to the top on every live update.
     stageScroll = { top: stage.scrollTop, left: stage.scrollLeft };
+    shotBusy = true;
     try {
       const r = await api('/api/browser/screenshot?tab=' + encodeURIComponent(activeTab));
-      if (!r.ok) { setStatus('Screenshot failed'); return; }
+      if (!r.ok) {
+        browserDown = true;
+        setStatus('Browser not running — tap to retry');
+        return;
+      }
       const blob = await r.blob();
       const url = URL.createObjectURL(blob);
       const old = shot.src;
       shot.src = url;
+      // Restore scroll after the new frame actually decodes.
+      shot.onload = () => {
+        stage.scrollTop = stageScroll.top;
+        stage.scrollLeft = stageScroll.left;
+        gUpdateThumb();
+      };
       if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
-      stage.scrollTop = stageScroll.top;
-      stage.scrollLeft = stageScroll.left;
-      gUpdateThumb();
       setStatus('live');
     } catch { setStatus('Screenshot error'); }
+    finally { shotBusy = false; }
   }
+
+  // Retry when the browser comes back (tap status or the LIVE toggle).
+  function retryBrowser() {
+    browserDown = false;
+    refreshTabs().then((ok) => { if (ok) { refreshShot(); startLoop(); } });
+  }
+  statusEl.addEventListener('click', () => { if (browserDown) retryBrowser(); });
 
   function toggleLive() {
     live = !live;
@@ -380,20 +430,29 @@
     liveBtn.textContent = live ? '● LIVE' : '⏸ paused';
     clearInterval(refreshTimer);
     if (live) {
+      refreshTabs();
       refreshShot();
-      refreshTimer = setInterval(refreshShot, 1500);
+      refreshTimer = setInterval(tick, 1500);
     }
   }
+  // One loop tick: keep tabs fresh AND the screenshot current.
+  function tick() {
+    if (browserDown) { refreshTabs(); return; }
+    refreshShot();
+    // Poll tabs occasionally so new agent-opened tabs appear.
+    if (Math.random() < 0.2) refreshTabs();
+  }
 
-  // Tap-to-click: send click at screenshot coords.
+  // Tap-to-click: send click at screenshot coords (accounting for scroll).
   shot.addEventListener('click', async (e) => {
     if (!activeTab) return;
     const rect = shot.getBoundingClientRect();
     const scaleX = shot.naturalWidth ? shot.naturalWidth / rect.width : 1;
     const scaleY = shot.naturalHeight ? shot.naturalHeight / rect.height : 1;
     const x = Math.round((e.clientX - rect.left) * scaleX);
-    const y = Math.round((e.clientY - rect.top) * scaleY);
-    await post('/api/browser/click', { tab: activeTab, x, y });
+    const y = Math.round((e.clientY - rect.top + stage.scrollTop) * scaleY);
+    const j = await post('/api/browser/click', { tab: activeTab, x, y }).catch(() => ({}));
+    if (j.error) setStatus('click failed: ' + j.error);
     if (live) refreshShot();
   });
 
@@ -436,9 +495,13 @@
 
   // Boot
   (async () => {
-    await refreshTabs();
-    if (activeTab) { refreshShot(); refreshTimer = setInterval(refreshShot, 1500); }
-    else setStatus('No browser tabs — the agent may open one');
+    const ok = await refreshTabs();
+    if (ok) {
+      refreshShot();
+      refreshTimer = setInterval(tick, 1500);
+    } else {
+      setStatus('Browser not running — tap to retry');
+    }
   })();
 })();
 </script>

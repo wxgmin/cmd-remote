@@ -390,6 +390,22 @@ namespace CmdRemoteApp
                                 break;
                             }
                         }
+                        // Persist WORK_DIR in the app's .env so the servers
+                        // (and the Files page) always use the same root even
+                        // when launched from the install dir.
+                        var envLines = new System.Collections.Generic.List<string>(File.ReadAllLines(envPath));
+                        bool hasWorkDir = false;
+                        for (int i = 0; i < envLines.Count; i++)
+                        {
+                            if (envLines[i].StartsWith("WORK_DIR=", StringComparison.OrdinalIgnoreCase))
+                            {
+                                envLines[i] = "WORK_DIR=" + workDir;
+                                hasWorkDir = true;
+                                break;
+                            }
+                        }
+                        if (!hasWorkDir) envLines.Add("WORK_DIR=" + workDir);
+                        File.WriteAllLines(envPath, envLines.ToArray());
                     }
                 }
                 catch { }

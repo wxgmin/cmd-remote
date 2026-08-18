@@ -107,6 +107,7 @@
     padding: 6px 8px 20px;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none; /* gesture strip replaces the thin PC scrollbar */
+    position: relative;
   }
   #list::-webkit-scrollbar { display: none; width: 0; }
   /* Gesture scroll strip: invisible wide zone on the right edge. Touching it
@@ -281,8 +282,8 @@
   let roots = [];
   let stack = []; // directory navigation stack (absolute paths)
   let searchBox = null;
-  let listScroll = 0; // preserve scroll position across re-renders
   let lastBlobUrl = null; // revoke previous object URLs to avoid leaks
+  const scrollPositions = new Map(); // path -> scrollTop (restore per path)
 
   function fmtSize(n) {
     if (!n && n !== 0) return '';
@@ -313,11 +314,13 @@
   gline.className = 'gline';
   gstrip.appendChild(gthumb);
   gstrip.appendChild(gline);
-  document.body.appendChild(gstrip);
+  // Anchor inside the list (position:relative) so it never covers the header.
+  listEl.appendChild(gstrip);
 
   let gTarget = null; // the scrollable element the strip currently controls
   let gDragging = false;
   let gRatio = 0;
+  let gBoundTarget = null;
 
   function gUpdateThumb() {
     if (!gTarget) return;
@@ -365,10 +368,17 @@
   });
 
   function gBind(target) {
+    if (!target) { gstrip.style.display = 'none'; gTarget = null; return; }
     gTarget = target;
-    if (!target) { gstrip.style.display = 'none'; return; }
+    // Move the strip into the active scroll container so it never covers
+    // the header or the wrong panel.
+    if (gBoundTarget !== target) {
+      if (gBoundTarget) gBoundTarget.removeEventListener('scroll', gUpdateThumb, { passive: true });
+      target.appendChild(gstrip);
+      target.addEventListener('scroll', gUpdateThumb, { passive: true });
+      gBoundTarget = target;
+    }
     gstrip.style.display = 'block';
-    target.addEventListener('scroll', gUpdateThumb, { passive: true });
     gUpdateThumb();
   }
   function gHide() { gBind(null); }
@@ -385,13 +395,43 @@
 
   async function api(url) {
     const r = await fetch(url, { headers: auth });
-    if (r.status === 401) throw new Error('Unauthorized');
+    if (r.status === 401) { showTokenPrompt(); throw new Error('Unauthorized — enter your token'); }
     return r;
+  }
+
+  // ---- Token fallback: if opened without ?token= (Android WebView has no
+  // localStorage), prompt for the token instead of a dead end. ----
+  const loginOverlay = document.createElement('div');
+  loginOverlay.style.cssText = 'position:fixed;inset:0;background:rgba(11,13,18,.97);display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:50;padding:24px;color:var(--text)';
+  loginOverlay.innerHTML = '<div style="font-size:15px;font-weight:700">Enter your access token</div>' +
+    '<input id="tokenInput" type="password" placeholder="Token from your PC" autocomplete="off" style="width:100%;max-width:320px;background:rgba(255,255,255,.08);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;padding:12px 14px;outline:none">' +
+    '<button id="tokenBtn" style="border:1px solid var(--border);background:var(--grad);color:#fff;border-radius:10px;padding:12px 26px;font-size:14px;font-weight:700;cursor:pointer">Connect</button>' +
+    '<div id="tokenErr" style="color:var(--error);font-size:12px;min-height:14px"></div>';
+  document.body.appendChild(loginOverlay);
+  function showTokenPrompt() {
+    loginOverlay.style.display = 'flex';
+    const inp = loginOverlay.querySelector('#tokenInput');
+    const btn = loginOverlay.querySelector('#tokenBtn');
+    const err = loginOverlay.querySelector('#tokenErr');
+    btn.onclick = async () => {
+      const t = inp.value.trim();
+      if (!t) { err.textContent = 'Enter the token shown on your PC.'; return; }
+      try {
+        localStorage.setItem('cmd_remote_token', t);
+        const probe = await fetch('/api/fs/list', { headers: { Authorization: 'Bearer ' + t } });
+        if (!probe.ok) { err.textContent = 'That token did not work.'; return; }
+        loginOverlay.style.display = 'none';
+        location.reload();
+      } catch { err.textContent = 'Could not reach the server.'; }
+    };
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
+    setTimeout(() => inp.focus(), 50);
   }
 
   function showList() {
     viewerEl.classList.add('hidden');
     listEl.classList.remove('hidden');
+    if (lastBlobUrl) { URL.revokeObjectURL(lastBlobUrl); lastBlobUrl = null; }
     document.getElementById('searchBox')?.remove();
   }
   function showViewer() {
@@ -423,7 +463,10 @@
   async function loadDir(absPath) {
     showList();
     pathbarEl.textContent = absPath;
-    listScroll = listEl.scrollTop; // remember where the user was
+    // Remember where the user was in the CURRENT path before leaving it.
+    if (stack.length && stack[stack.length - 1]) {
+      scrollPositions.set(stack[stack.length - 1], listEl.scrollTop);
+    }
     listEl.innerHTML = '<div id="msg">Loading…</div>';
     try {
       const r = await api('/api/fs/list?path=' + encodeURIComponent(absPath));
@@ -453,9 +496,8 @@
         listEl.appendChild(el);
       }
       if (!j.entries.length) listEl.innerHTML = '<div id="msg">Empty folder</div>';
-      // Restore scroll position (a fresh directory starts at the top).
-      if (absPath !== stack[stack.length - 1]) listEl.scrollTop = 0;
-      else listEl.scrollTop = listScroll;
+      // Restore scroll position for THIS path only (fresh folders start at top).
+      listEl.scrollTop = scrollPositions.get(absPath) || 0;
       gUpdateThumb();
       // Vault search box (only when inside the vault root)
       if (absPath === (roots.find((r) => r.includes('Obsidian')) || '')) addSearchBox();
@@ -468,17 +510,22 @@
     const box = document.createElement('input');
     box.id = 'searchBox';
     box.placeholder = 'Search vault…';
-    box.addEventListener('keydown', async (e) => {
+    box.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' || !box.value.trim()) return;
+      doVaultSearch(box.value.trim());
+    });
+    box.addEventListener('search', () => { // Android IME search action
+      if (box.value.trim()) doVaultSearch(box.value.trim());
+    });
+    async function doVaultSearch(q) {
       try {
-        const r = await api('/api/obsidian/search?q=' + encodeURIComponent(box.value.trim()));
+        const r = await api('/api/obsidian/search?q=' + encodeURIComponent(q));
         const j = await r.json();
         if (!j.available) { listEl.innerHTML = '<div id="msg">Obsidian search not available</div>'; return; }
-        listEl.innerHTML = '<div id="msg" style="text-align:left;padding:8px 4px"><b>Search results for "' + box.value.trim() + '"</b></div>';
+        listEl.innerHTML = '<div id="msg" style="text-align:left;padding:8px 4px"><b>Search results for "' + q + '"</b></div>';
         for (const m of j.results || []) {
           const el = document.createElement('div');
           el.className = 'item';
-          const [name, ...rest] = (m.filename || '').split('/');
           el.innerHTML = '<span class="icon">📝</span><span class="name"></span><span class="meta"></span>';
           el.querySelector('.name').textContent = m.filename || m.result;
           el.querySelector('.meta').textContent = '';
@@ -492,7 +539,7 @@
       } catch (err) {
         listEl.innerHTML = '<div id="msg">Search error: ' + err.message + '</div>';
       }
-    });
+    }
     rootsEl.appendChild(box);
     searchBox = box;
   }
@@ -503,6 +550,8 @@
     const ext = (absPath.split('.').pop() || '').toLowerCase();
     const isXlsx = ['xlsx', 'xls', 'csv', 'tsv'].includes(ext);
     const isPdf = ext === 'pdf';
+    const name = absPath.split('/').pop();
+    const downloadUrl = '/api/fs/file?path=' + encodeURIComponent(absPath) + (token ? '&token=' + encodeURIComponent(token) : '');
     try {
       const r = await api('/api/fs/file?path=' + encodeURIComponent(absPath));
       if (!r.ok) {
@@ -511,11 +560,13 @@
         return;
       }
       const ct = r.headers.get('Content-Type') || '';
-      const name = absPath.split('/').pop();
-      const downloadUrl = '/api/fs/file?path=' + encodeURIComponent(absPath) + (token ? '&token=' + encodeURIComponent(token) : '');
 
       // Excel / CSV / TSV: parse with SheetJS and render a table.
-      if (isXlsx && window.XLSX) {
+      if (isXlsx) {
+        if (!window.XLSX) {
+          viewerEl.innerHTML = '<div style="margin-bottom:10px;color:var(--muted);font-size:12px">' + name + '</div><div id="msg">Spreadsheet preview not available (library missing).</div><div class="fileActions"><a href="' + downloadUrl + '" download="' + name + '">⬇ Download ' + ext.toUpperCase() + '</a></div>';
+          return;
+        }
         const buf = await r.arrayBuffer();
         const wb = XLSX.read(buf, { type: 'array' });
         const ws = wb.Sheets[wb.SheetNames[0]];
