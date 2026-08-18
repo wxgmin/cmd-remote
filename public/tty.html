@@ -173,6 +173,13 @@
     border-color: transparent;
     box-shadow: 0 4px 16px rgba(139,92,246,.4);
   }
+  /* Keyboard lock is ON: button turns red and clearly visible */
+  #toolbar button.locked {
+    background: linear-gradient(135deg, #ff6b81, #f59e0b);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 4px 16px rgba(255, 107, 129, 0.5);
+  }
   #toolbar .sep { flex: 0 0 1px; height: 30px; align-self: center; background: var(--border); }
   .hint {
     font-size: 10px; color: var(--muted); text-align: center; padding: 5px;
@@ -366,8 +373,8 @@
   }
 
   // --- Keyboard control: it only opens on an explicit ⌨ tap; the lock
-  // prevents it from ever auto-opening (scroll, tap, output, arrows).
-  // The lock is PERSISTENT: it survives reloads and app restarts.
+  // prevents it from EVER opening — even tapping a text box or the terminal
+  // won't raise the keyboard. The lock is PERSISTENT.
   const kbBtn = document.getElementById('kbBtn');
   const kbLockBtn = document.getElementById('kbLock');
   let keyboardOpen = false;
@@ -376,12 +383,14 @@
   function setKbUI() {
     kbBtn.classList.toggle('latched', keyboardOpen);
     kbBtn.textContent = keyboardOpen ? '⌨ on' : '⌨';
-    kbLockBtn.classList.toggle('latched', kbLock);
-    kbLockBtn.textContent = kbLock ? '🔒 on' : '🔒';
+    kbLockBtn.classList.toggle('locked', kbLock);
+    kbLockBtn.textContent = kbLock ? '🔒 OFF' : '🔒';
+    kbLockBtn.title = kbLock ? 'Keyboard is OFF. Tap to enable.' : 'Keyboard is ON. Tap to disable.';
   }
   function focusTerminal(preventScroll) {
     // Focus xterm without letting Android pop the keyboard (blur() first
     // keeps the IME from re-attaching to the hidden textarea).
+    if (kbLock) return; // locked: never focus the terminal textarea
     try { term.blur(); } catch {}
     term.focus({ preventScroll: !!preventScroll });
   }
@@ -400,7 +409,7 @@
     kbLock = !kbLock;
     try { localStorage.setItem('tty_kb_lock', kbLock ? '1' : '0'); } catch {}
     if (kbLock) {
-      // Locking hides the keyboard immediately.
+      // Locking hides the keyboard immediately and never lets it return.
       keyboardOpen = false;
       try { term.blur(); } catch {}
       try { document.activeElement && document.activeElement.blur(); } catch {}
@@ -615,10 +624,21 @@
 
   // Tap to focus WITHOUT popping the keyboard on mobile (a real tap only
   // moves focus to xterm; the IME stays closed until ⌨ is tapped). Swipes
-  // to scroll never focus at all. If locked, taps never focus either.
+  // to scroll never focus at all. Taps on the scrollbar never focus either.
   let tapStart = null;
   termEl.addEventListener('touchstart', (e) => {
-    tapStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    const t = e.touches[0];
+    // Ignore taps that land on the scrollbar (right edge of the viewport).
+    const vp = termEl.querySelector('.xterm-viewport');
+    if (vp) {
+      const r = vp.getBoundingClientRect();
+      const sbW = 14; // approximate scrollbar width
+      if (t.clientX > r.right - sbW && vp.scrollHeight > vp.clientHeight) {
+        tapStart = null;
+        return;
+      }
+    }
+    tapStart = { x: t.clientX, y: t.clientY };
   }, { passive: true });
   termEl.addEventListener('touchend', (e) => {
     if (!tapStart) return;
@@ -629,7 +649,15 @@
       if (!kbLock) focusTerminal(true);
     }
   }, { passive: true });
-  termEl.addEventListener('click', () => {
+  termEl.addEventListener('click', (e) => {
+    // Only treat clicks on the terminal itself (not the scrollbar) as focus.
+    if (e.offsetX !== undefined && e.target && e.target.closest) {
+      const vp = termEl.querySelector('.xterm-viewport');
+      if (vp && vp.scrollHeight > vp.clientHeight) {
+        const r = vp.getBoundingClientRect();
+        if (e.clientX > r.right - 14) return; // scrollbar
+      }
+    }
     if (!kbLock) focusTerminal(true);
   });
 
@@ -639,6 +667,15 @@
     origWrite(data);
     if (stickToBottom) scrollToLatest();
   };
+
+  // HARD BLOCK when locked: even if the browser/WebView tries to focus
+  // xterm's hidden textarea (tap on scrollbar, tap on terminal, etc.), blur
+  // it immediately so the keyboard can never appear.
+  document.addEventListener('focusin', (e) => {
+    if (kbLock && e.target && e.target.tagName === 'TEXTAREA') {
+      try { e.target.blur(); } catch {}
+    }
+  }, true);
 
   // Tab boot (async) handles the initial connect.
 })();

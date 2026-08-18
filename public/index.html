@@ -271,6 +271,13 @@
     border-color: transparent;
     box-shadow: 0 6px 22px rgba(139, 92, 246, 0.4);
   }
+  /* Keyboard lock is ON: button turns red and clearly visible */
+  #kbControls button.locked {
+    background: linear-gradient(135deg, #ff6b81, #f59e0b);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 6px 22px rgba(255, 107, 129, 0.5);
+  }
   @media (pointer: coarse) {
     #kbControls { display: flex; }
   }
@@ -789,8 +796,9 @@
   function setKbUI() {
     kbBtn.classList.toggle('latched', document.activeElement === inputEl);
     kbBtn.textContent = document.activeElement === inputEl ? '⌨ on' : '⌨';
-    kbLockBtn.classList.toggle('latched', kbLock);
-    kbLockBtn.textContent = kbLock ? '🔒 on' : '🔒';
+    kbLockBtn.classList.toggle('locked', kbLock);
+    kbLockBtn.textContent = kbLock ? '🔒 OFF' : '🔒';
+    kbLockBtn.title = kbLock ? 'Keyboard is OFF. Tap to enable.' : 'Keyboard is ON. Tap to disable.';
   }
   kbBtn.addEventListener('click', () => {
     if (kbLock) return;
@@ -809,6 +817,14 @@
   });
   inputEl.addEventListener('focus', setKbUI);
   inputEl.addEventListener('blur', setKbUI);
+  // HARD BLOCK when locked: tapping the textarea (or anything that would
+  // focus it) blurs it immediately so the keyboard can never appear.
+  document.addEventListener('focusin', (e) => {
+    if (kbLock && e.target === inputEl) {
+      try { inputEl.blur(); } catch {}
+      setKbUI();
+    }
+  }, true);
 
   // --- Events ---
   stopBtn.onclick = () => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop', sessionId: currentSessionId })); };
