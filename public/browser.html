@@ -136,7 +136,30 @@
     position: relative;
     background: #000;
     -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; /* gesture strip replaces the PC scrollbar */
   }
+  #stage::-webkit-scrollbar { display: none; width: 0; }
+  /* Gesture scroll strip (see files.html for the same pattern) */
+  .gstrip {
+    position: absolute;
+    top: 0; right: 0; bottom: 0;
+    width: 34px;
+    touch-action: none;
+    z-index: 5;
+    cursor: pointer;
+  }
+  .gstrip .gthumb {
+    position: absolute; right: 4px; width: 7px; border-radius: 4px;
+    background: rgba(139, 92, 246, 0.5); min-height: 28px;
+    opacity: 0; transition: opacity .15s ease; pointer-events: none;
+  }
+  .gstrip:active .gthumb, .gstrip:hover .gthumb { opacity: 1; }
+  .gstrip.dragging { background: rgba(139,92,246,.06); }
+  .gstrip .gline {
+    position: absolute; left: 0; right: 0; height: 2px;
+    background: rgba(139,92,246,.35); pointer-events: none; opacity: 0;
+  }
+  .gstrip.dragging .gline { opacity: 1; }
   #shot {
     display: block;
     width: 100%;
@@ -245,6 +268,46 @@
 
   const stage = $('stage');
 
+  // ---- Gesture scroll strip (same pattern as files.html) ----
+  const gstrip = document.createElement('div');
+  gstrip.className = 'gstrip';
+  const gthumb = document.createElement('div');
+  gthumb.className = 'gthumb';
+  const gline = document.createElement('div');
+  gline.className = 'gline';
+  gstrip.appendChild(gthumb);
+  gstrip.appendChild(gline);
+  document.body.appendChild(gstrip);
+  const gTarget = stage;
+  let gDragging = false;
+  function gUpdateThumb() {
+    const max = gTarget.scrollHeight - gTarget.clientHeight;
+    const ratio = max > 0 ? gTarget.scrollTop / max : 0;
+    const h = Math.max(28, gTarget.clientHeight * (gTarget.clientHeight / gTarget.scrollHeight));
+    gthumb.style.height = h + 'px';
+    gthumb.style.top = (ratio * (gTarget.clientHeight - h)) + 'px';
+  }
+  function gScrollToFinger(y) {
+    const rect = gstrip.getBoundingClientRect();
+    const max = gTarget.scrollHeight - gTarget.clientHeight;
+    if (max <= 0) return;
+    const ratio = Math.min(1, Math.max(0, (y - rect.top) / rect.height));
+    gTarget.scrollTop = ratio * max;
+    gline.style.top = (y - rect.top) + 'px';
+    gUpdateThumb();
+  }
+  gstrip.addEventListener('touchstart', (e) => { e.preventDefault(); gDragging = true; gstrip.classList.add('dragging'); gScrollToFinger(e.touches[0].clientY); }, { passive: false });
+  gstrip.addEventListener('touchmove', (e) => { if (!gDragging) return; e.preventDefault(); gScrollToFinger(e.touches[0].clientY); }, { passive: false });
+  gstrip.addEventListener('touchend', () => { gDragging = false; gstrip.classList.remove('dragging'); });
+  gstrip.addEventListener('mousedown', (e) => {
+    gDragging = true; gstrip.classList.add('dragging'); gScrollToFinger(e.clientY);
+    const move = (ev) => gScrollToFinger(ev.clientY);
+    const up = () => { gDragging = false; gstrip.classList.remove('dragging'); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+  stage.addEventListener('scroll', gUpdateThumb, { passive: true });
+
   async function api(url, opts) {
     const r = await fetch(url, { headers: auth, ...opts });
     if (r.status === 401) throw new Error('Unauthorized');
@@ -306,6 +369,7 @@
       if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
       stage.scrollTop = stageScroll.top;
       stage.scrollLeft = stageScroll.left;
+      gUpdateThumb();
       setStatus('live');
     } catch { setStatus('Screenshot error'); }
   }
