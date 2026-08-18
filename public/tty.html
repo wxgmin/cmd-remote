@@ -704,6 +704,7 @@
   // keyboard show/hide, which window.resize alone does not reliably fire.
   // visualViewport is the reliable signal on mobile WebViews.
   let refitRaf = null;
+  let lastVvHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
   function refit() {
     if (refitRaf) return;
     refitRaf = requestAnimationFrame(() => {
@@ -714,10 +715,38 @@
       }
       refreshScrollHint();
       updateScrollbar();
+      // Keyboard-closed detection: the visual viewport grew back. If the
+      // xterm textarea still has focus, blur it so the WebView exits
+      // text-selection mode (which makes drags select text instead of
+      // scrolling).
+      if (window.visualViewport && window.visualViewport.height > lastVvHeight + 80) {
+        const ta = term.textarea;
+        if (ta && document.activeElement === ta) {
+          try { ta.blur(); } catch {}
+        }
+      }
+      if (window.visualViewport) lastVvHeight = window.visualViewport.height;
     });
   }
   window.addEventListener('resize', refit);
   if (window.visualViewport) window.visualViewport.addEventListener('resize', refit);
+
+  // ---- Neutralize xterm's built-in touch gesture handler ----
+  // xterm attaches its own touchmove listener on `document` (bubble phase,
+  // non-passive) and preventDefaults when it decides to handle a scroll
+  // gesture, fighting native scrolling in the Android WebView (the classic
+  // "only scrolls with the keyboard open" symptom: xterm's gesture math
+  // breaks once the layout height changes).
+  // Fix: intercept touchmove in the CAPTURE phase on the viewport (runs
+  // before xterm's document bubble listener) and stopPropagation — the
+  // event still reaches the viewport's native scroller, but xterm never
+  // sees it. We do NOT preventDefault, so native momentum scroll wins.
+  // Taps are untouched (only touchmove is intercepted), so tap-to-focus
+  // still works.
+  const vpTouch = termEl.querySelector('.xterm-viewport');
+  if (vpTouch) {
+    vpTouch.addEventListener('touchmove', (e) => { e.stopPropagation(); }, { capture: true, passive: true });
+  }
 
   // Tap to focus WITHOUT popping the keyboard on mobile (a real tap only
   // moves focus to xterm; the IME stays closed until ⌨ is tapped). Swipes
