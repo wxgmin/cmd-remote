@@ -105,7 +105,9 @@ wss.on('connection', (ws, req) => {
     ws.send(JSON.stringify({ type: 'size', cols: s.cols, rows: s.rows }));
   } else {
     // New independent PTY (or stale session id -> fresh one).
-    const proc = pty.spawn(process.execPath, [CMD_ENTRY], {
+    // Start Command Code with --yolo: bypasses all permission prompts so
+    // commands run without asking (full access by default).
+    const proc = pty.spawn(process.execPath, [CMD_ENTRY, '--yolo'], {
       name: 'xterm-256color',
       cols: 100,
       rows: 30,

@@ -213,6 +213,7 @@
 <div id="term"></div>
 <div id="toolbar" aria-label="Terminal keys">
   <button id="kCtrl" title="Hold Ctrl for shortcuts (Ctrl+C, Ctrl+D…)">Ctrl</button>
+  <button id="kShift" title="Hold Shift for Shift+Tab, arrows, and uppercase">Shift</button>
   <button id="kEsc" title="Escape">Esc</button>
   <button id="kTab" title="Tab">Tab</button>
   <span class="sep"></span>
@@ -282,7 +283,7 @@
   }
   scrollHint.addEventListener('click', () => { stickToBottom = true; scrollToLatest(); refreshScrollHint(); });
 
-  // --- Toolbar: arrows / Esc / Tab / Ctrl send real PTY input ---
+  // --- Toolbar: arrows / Esc / Tab / Ctrl / Shift send real PTY input ---
   function sendKeys(seq) {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: seq }));
     // NOTE: no term.focus() here — focusing xterm's textarea on Android
@@ -292,6 +293,12 @@
     kUp: '\x1b[A', kDown: '\x1b[B', kRight: '\x1b[C', kLeft: '\x1b[D',
     kEsc: '\x1b', kTab: '\t', kEnter: '\r',
   };
+  // Shifted variants: Shift+Tab is a macro, shifted arrows select text.
+  const SHIFT_KEYS = {
+    kTab: '\x1b[Z', // Shift+Tab
+    kUp: '\x1b[1;2A', kDown: '\x1b[1;2B', kRight: '\x1b[1;2C', kLeft: '\x1b[1;2D',
+  };
+
   // Ctrl latch: tap once for the next key (Ctrl+C, Ctrl+D…), double-tap to hold.
   const ctrlBtn = document.getElementById('kCtrl');
   let ctrlLatched = false;
@@ -315,12 +322,44 @@
     // If no key follows within 1.6s, the latch expires.
     ctrlTapTimer = setTimeout(() => { ctrlLatched = false; setCtrlUI(); }, 1600);
   });
+
+  // Shift latch: tap once for the next key (Shift+Tab, Shift+arrow, uppercase),
+  // double-tap to hold (like caps lock). Independent of Ctrl.
+  const shiftBtn = document.getElementById('kShift');
+  let shiftLatched = false;
+  let shiftHold = false;
+  let shiftTapTimer = null;
+  function setShiftUI() {
+    shiftBtn.classList.toggle('latched', shiftLatched || shiftHold);
+    shiftBtn.textContent = (shiftLatched ? 'Shift… ' : shiftHold ? 'SHIFT ON ' : 'Shift ') + (shiftLatched ? '1×' : shiftHold ? '⏻' : '');
+  }
+  function clearShift() {
+    shiftLatched = false;
+    shiftHold = false;
+    clearTimeout(shiftTapTimer);
+    setShiftUI();
+  }
+  shiftBtn.addEventListener('click', () => {
+    clearTimeout(shiftTapTimer);
+    if (shiftLatched) { shiftHold = true; shiftLatched = false; setShiftUI(); return; }
+    shiftLatched = true;
+    setShiftUI();
+    shiftTapTimer = setTimeout(() => { shiftLatched = false; setShiftUI(); }, 1600);
+  });
+
   for (const [id, seq] of Object.entries(KEYS)) {
     document.getElementById(id).addEventListener('click', () => {
       // Apply a latched/hold Ctrl to letter keys (single-char sequences only).
       if (ctrlLatched || ctrlHold) {
         const c = seq.charCodeAt(0);
         if (c >= 0x61 && c <= 0x7a) { sendKeys(String.fromCharCode(c - 0x60)); clearCtrl(); return; }
+      }
+      // Apply latched/hold Shift: Shift+Tab macro, shifted arrows, uppercase.
+      if (shiftLatched || shiftHold) {
+        const shifted = SHIFT_KEYS[id];
+        if (shifted) { sendKeys(shifted); clearShift(); return; }
+        const c = seq.charCodeAt(0);
+        if (c >= 0x61 && c <= 0x7a) { sendKeys(String.fromCharCode(c - 0x20)); clearShift(); return; } // uppercase
       }
       sendKeys(seq);
     });
@@ -553,6 +592,14 @@
         const c = data.charCodeAt(0);
         if (c >= 0x61 && c <= 0x7a) { data = String.fromCharCode(c - 0x60); clearCtrl(); }
         else if (c >= 0x41 && c <= 0x5a) { data = String.fromCharCode(c - 0x40); clearCtrl(); }
+      }
+    }
+    // A latched/hold Shift uppercases the next typed letter.
+    if (shiftLatched || shiftHold) {
+      if (data.length === 1) {
+        const c = data.charCodeAt(0);
+        if (c >= 0x61 && c <= 0x7a) { data = String.fromCharCode(c - 0x20); clearShift(); }
+        else if (c >= 0x41 && c <= 0x5a) { clearShift(); }
       }
     }
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
