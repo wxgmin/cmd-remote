@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0b0d12">
+<title>Files — Cmd Remote</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.json">
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: rgba(255, 255, 255, 0.045);
+    --panel-solid: #13161d;
+    --border: rgba(255, 255, 255, 0.09);
+    --text: #f2f4f8;
+    --muted: #9aa3b5;
+    --violet: #8b5cf6;
+    --cyan: #06b6d4;
+    --accent: #7c8cff;
+    --grad: linear-gradient(135deg, #8b5cf6, #06b6d4);
+    --error: #ff6b81;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); }
+  body {
+    display: flex; flex-direction: column;
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 11px;
+    padding: 10px 14px;
+    background: var(--panel);
+    backdrop-filter: blur(18px);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .logo-mark {
+    width: 28px; height: 28px; border-radius: 9px;
+    background: var(--grad);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 16px rgba(139, 92, 246, 0.45);
+    flex-shrink: 0;
+  }
+  .logo-mark svg { width: 60%; height: 60%; }
+  header h1 { font-size: 14px; font-weight: 700; flex: 1; letter-spacing: -0.01em; }
+  #backBtn {
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,.06);
+    color: var(--text);
+    border-radius: 9px;
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  #backBtn:active { background: rgba(139,92,246,.25); }
+
+  /* Path bar + quick access */
+  #pathbar {
+    padding: 10px 14px 4px;
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    word-break: break-all;
+    flex-shrink: 0;
+  }
+  #roots {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    padding: 8px 14px 4px;
+    flex-shrink: 0;
+  }
+  .root-chip {
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,.05);
+    color: var(--text);
+    border-radius: 20px;
+    padding: 7px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .root-chip:active { background: rgba(139,92,246,.25); }
+  #searchBox {
+    flex: 1;
+    min-width: 160px;
+    background: rgba(255,255,255,.06);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    color: var(--text);
+    font-size: 13px;
+    padding: 7px 14px;
+    outline: none;
+    font-family: inherit;
+  }
+  #searchBox:focus { border-color: rgba(139,92,246,.55); }
+
+  /* Listing */
+  #list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 8px 20px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 12px;
+    border-radius: 11px;
+    cursor: pointer;
+    min-height: 48px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .item:active { background: rgba(255,255,255,.06); }
+  .item .icon { font-size: 17px; width: 24px; text-align: center; flex-shrink: 0; }
+  .item .name {
+    flex: 1;
+    font-size: 14px;
+    color: var(--text);
+    word-break: break-all;
+  }
+  .item .meta {
+    font-size: 11px;
+    color: var(--muted);
+    flex-shrink: 0;
+    text-align: right;
+  }
+  #msg { padding: 20px; text-align: center; color: var(--muted); font-size: 13px; }
+
+  /* File view */
+  #viewer {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+    -webkit-overflow-scrolling: touch;
+  }
+  #viewer pre {
+    background: rgba(255,255,255,.03);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    color: var(--text);
+    overflow-x: auto;
+  }
+  #viewer img {
+    max-width: 100%;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+  #viewer .bin {
+    padding: 30px;
+    text-align: center;
+    color: var(--muted);
+  }
+  #searchResults .item .result {
+    flex: 1;
+    font-size: 12.5px;
+    color: var(--muted);
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo-mark"><svg viewBox="0 0 64 64" fill="none"><path d="M20 24 L37 32 L20 40" stroke="#fff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M25 44 h15" stroke="#fff" stroke-width="6.5" stroke-linecap="round"/></svg></div>
+  <h1>Files</h1>
+  <button id="backBtn">← Back</button>
+</header>
+
+<div id="pathbar">…</div>
+<div id="roots"></div>
+<div id="list"></div>
+<div id="viewer" class="hidden"></div>
+
+<script>
+(function () {
+  const listEl = document.getElementById('list');
+  const viewerEl = document.getElementById('viewer');
+  const pathbarEl = document.getElementById('pathbar');
+  const rootsEl = document.getElementById('roots');
+  const backBtn = document.getElementById('backBtn');
+  const token = new URLSearchParams(location.search).get('token') || localStorage.getItem('cmd_remote_token') || '';
+  const auth = token ? { 'Authorization': 'Bearer ' + token } : {};
+
+  let roots = [];
+  let stack = []; // directory navigation stack (absolute paths)
+  let searchBox = null;
+
+  function fmtSize(n) {
+    if (!n && n !== 0) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+  function fmtTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+  function iconFor(name, type) {
+    if (type === 'dir') return '📁';
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    const map = { md: '📝', txt: '📄', json: '🧾', js: '⚡', mjs: '⚡', ts: '⚡', py: '🐍', html: '🌐', css: '🎨', png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', svg: '🖼️', webp: '🖼️', log: '📋', csv: '📊', sh: '🐚', bat: '🪟', cmd: '🪟' };
+    return map[ext] || '📄';
+  }
+
+  async function api(url) {
+    const r = await fetch(url, { headers: auth });
+    if (r.status === 401) throw new Error('Unauthorized');
+    return r;
+  }
+
+  function showList() {
+    viewerEl.classList.add('hidden');
+    listEl.classList.remove('hidden');
+    document.getElementById('searchBox')?.remove();
+  }
+  function showViewer() {
+    listEl.classList.add('hidden');
+    viewerEl.classList.remove('hidden');
+  }
+
+  function renderRoots() {
+    rootsEl.innerHTML = '';
+    const labels = { work: '💻 Working dir', projects: '🤖 Agent sessions', vault: '🗂️ Obsidian vault' };
+    // Build root chips from the API roots with friendly labels.
+    const rootMeta = [
+      { name: '💻 Working dir', find: (r) => r },
+      { name: '🤖 Agent sessions', find: (r) => r.endsWith(pathSep('projects')) || r.includes('.commandcode') },
+      { name: '🗂️ Obsidian vault', find: (r) => r.includes('Obsidian') },
+    ];
+    roots.forEach((r, i) => {
+      const chip = document.createElement('button');
+      chip.className = 'root-chip';
+      chip.textContent = rootMeta[i % rootMeta.length]?.name || r;
+      chip.addEventListener('click', () => { stack = [r]; loadDir(r); });
+      rootsEl.appendChild(chip);
+    });
+  }
+
+  function pathSep() { return '/'; }
+
+  async function loadDir(absPath) {
+    showList();
+    pathbarEl.textContent = absPath;
+    listEl.innerHTML = '<div id="msg">Loading…</div>';
+    try {
+      const r = await api('/api/fs/list?path=' + encodeURIComponent(absPath));
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      roots = j.roots || roots;
+      renderRoots();
+      listEl.innerHTML = '';
+      // Up entry
+      if (stack.length > 1) {
+        const up = document.createElement('div');
+        up.className = 'item';
+        up.innerHTML = '<span class="icon">⬆️</span><span class="name">.. (up)</span><span class="meta"></span>';
+        up.addEventListener('click', () => { stack.pop(); loadDir(stack[stack.length - 1]); });
+        listEl.appendChild(up);
+      }
+      for (const e of j.entries) {
+        const el = document.createElement('div');
+        el.className = 'item';
+        el.innerHTML = '<span class="icon">' + iconFor(e.name, e.type) + '</span><span class="name"></span><span class="meta"></span>';
+        el.querySelector('.name').textContent = e.name;
+        el.querySelector('.meta').textContent = e.type === 'dir' ? '' : fmtSize(e.size) + (e.mtime ? ' · ' + fmtTime(e.mtime) : '');
+        el.addEventListener('click', () => {
+          if (e.type === 'dir') { stack.push(absPath); loadDir(absPath + '/' + e.name); }
+          else viewFile(absPath + '/' + e.name);
+        });
+        listEl.appendChild(el);
+      }
+      if (!j.entries.length) listEl.innerHTML = '<div id="msg">Empty folder</div>';
+      // Vault search box (only when inside the vault root)
+      if (absPath === (roots.find((r) => r.includes('Obsidian')) || '')) addSearchBox();
+    } catch (err) {
+      listEl.innerHTML = '<div id="msg">Error: ' + err.message + '</div>';
+    }
+  }
+
+  function addSearchBox() {
+    const box = document.createElement('input');
+    box.id = 'searchBox';
+    box.placeholder = 'Search vault…';
+    box.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter' || !box.value.trim()) return;
+      try {
+        const r = await api('/api/obsidian/search?q=' + encodeURIComponent(box.value.trim()));
+        const j = await r.json();
+        if (!j.available) { listEl.innerHTML = '<div id="msg">Obsidian search not available</div>'; return; }
+        listEl.innerHTML = '<div id="msg" style="text-align:left;padding:8px 4px"><b>Search results for "' + box.value.trim() + '"</b></div>';
+        for (const m of j.results || []) {
+          const el = document.createElement('div');
+          el.className = 'item';
+          const [name, ...rest] = (m.filename || '').split('/');
+          el.innerHTML = '<span class="icon">📝</span><span class="name"></span><span class="meta"></span>';
+          el.querySelector('.name').textContent = m.filename || m.result;
+          el.querySelector('.meta').textContent = '';
+          el.addEventListener('click', () => {
+            const full = (roots.find((r) => r.includes('Obsidian')) || '') + '/' + (m.filename || '');
+            viewFile(full);
+          });
+          listEl.appendChild(el);
+        }
+        if (!(j.results || []).length) listEl.innerHTML += '<div id="msg">No results</div>';
+      } catch (err) {
+        listEl.innerHTML = '<div id="msg">Search error: ' + err.message + '</div>';
+      }
+    });
+    rootsEl.appendChild(box);
+    searchBox = box;
+  }
+
+  async function viewFile(absPath) {
+    showViewer();
+    viewerEl.innerHTML = '<div id="msg">Loading…</div>';
+    try {
+      const r = await api('/api/fs/file?path=' + encodeURIComponent(absPath));
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        viewerEl.innerHTML = '<div id="msg">' + (j.error || 'Cannot open file') + '</div>';
+        return;
+      }
+      const ct = r.headers.get('Content-Type') || '';
+      const name = absPath.split('/').pop();
+      if (ct.startsWith('image/')) {
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        viewerEl.innerHTML = '<div style="margin-bottom:10px;color:var(--muted);font-size:12px">' + name + '</div><img src="' + url + '" alt="' + name + '">';
+      } else {
+        const text = await r.text();
+        viewerEl.innerHTML = '<div style="margin-bottom:10px;color:var(--muted);font-size:12px">' + name + '</div><pre></pre>';
+        viewerEl.querySelector('pre').textContent = text;
+      }
+    } catch (err) {
+      viewerEl.innerHTML = '<div id="msg">Error: ' + err.message + '</div>';
+    }
+  }
+
+  backBtn.addEventListener('click', () => {
+    if (!viewerEl.classList.contains('hidden')) { showList(); return; }
+    if (stack.length > 1) { stack.pop(); loadDir(stack[stack.length - 1]); }
+  });
+
+  // Boot: go to working dir root.
+  (async () => {
+    try {
+      const r = await api('/api/fs/list');
+      const j = await r.json();
+      roots = j.roots || [];
+      stack = [j.path];
+      renderRoots();
+      loadDir(j.path);
+    } catch (err) {
+      listEl.innerHTML = '<div id="msg">Error: ' + err.message + '</div>';
+    }
+  })();
+})();
+</script>
+</body>
+</html>

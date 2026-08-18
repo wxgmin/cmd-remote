@@ -156,6 +156,15 @@
   }
   header .logo-mark { width: 30px; height: 30px; border-radius: 10px; }
   header h2 { font-size: 15px; font-weight: 650; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.01em; }
+  header .navLink {
+    font-size: 18px;
+    text-decoration: none;
+    padding: 6px 8px;
+    border-radius: 9px;
+    color: var(--text);
+    flex-shrink: 0;
+  }
+  header .navLink:active { background: rgba(255,255,255,.1); }
   #menuBtn { display: none; background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; padding: 4px 8px; }
   .status {
     font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px;
@@ -399,6 +408,7 @@
     <button id="menuBtn">☰</button>
     <div class="logo-mark"><svg viewBox="0 0 64 64" fill="none"><path d="M20 24 L37 32 L20 40" stroke="#fff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M25 44 h15" stroke="#fff" stroke-width="6.5" stroke-linecap="round"/></svg></div>
     <h2 id="chatTitle">New chat</h2>
+    <a href="/files.html" class="navLink" title="Browse files">📁</a>
     <div class="status"><span class="dot" id="dot"></span><span id="statusText">connecting</span></div>
   </header>
   <div id="messages"></div>

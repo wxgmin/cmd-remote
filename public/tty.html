@@ -59,6 +59,15 @@
   }
   .logo-mark svg { width: 60%; height: 60%; }
   header h1 { font-size: 14px; font-weight: 700; flex: 1; letter-spacing: -0.01em; }
+  header .navLink {
+    font-size: 18px;
+    text-decoration: none;
+    padding: 6px 8px;
+    border-radius: 9px;
+    color: var(--text);
+    flex-shrink: 0;
+  }
+  header .navLink:active { background: rgba(255,255,255,.1); }
   .status {
     font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px;
     background: rgba(255,255,255,.05); border: 1px solid var(--border);
@@ -214,6 +223,7 @@
 <header>
   <div class="logo-mark"><svg viewBox="0 0 64 64" fill="none"><path d="M20 24 L37 32 L20 40" stroke="#fff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M25 44 h15" stroke="#fff" stroke-width="6.5" stroke-linecap="round"/></svg></div>
   <h1>Command Code Terminal</h1>
+  <a href="/files.html" class="navLink" title="Browse files">📁</a>
   <div class="status"><span class="dot" id="dot"></span><span id="statusText">connecting</span></div>
 </header>
 <div id="tabbar" aria-label="Terminal tabs"></div>
