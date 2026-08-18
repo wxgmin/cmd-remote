@@ -85,30 +85,10 @@
     position: relative;
   }
   .xterm { height: 100%; }
-  /* Hide the native PC scrollbar — replaced by the gesture scrub strip */
-  .xterm .xterm-viewport { scrollbar-width: none; }
-  .xterm .xterm-viewport::-webkit-scrollbar { display: none; width: 0; }
-  /* Gesture scrub strip (same pattern as files.html/browser.html) */
-  .gstrip {
-    position: absolute;
-    top: 0; right: 0; bottom: 0;
-    width: 36px;
-    touch-action: none;
-    z-index: 5;
-    cursor: pointer;
-  }
-  .gstrip .gthumb {
-    position: absolute; right: 4px; width: 8px; border-radius: 4px;
-    background: rgba(139, 92, 246, 0.55); min-height: 30px;
-    opacity: 0; transition: opacity .15s ease; pointer-events: none;
-  }
-  .gstrip:active .gthumb, .gstrip:hover .gthumb { opacity: 1; }
-  .gstrip.dragging { background: rgba(139,92,246,.07); }
-  .gstrip .gline {
-    position: absolute; left: 0; right: 0; height: 2px;
-    background: rgba(139,92,246,.4); pointer-events: none; opacity: 0;
-  }
-  .gstrip.dragging .gline { opacity: 1; }
+  /* Thin native scrollbar (affordance); the visual indicator overlays it */
+  .xterm .xterm-viewport { scrollbar-width: thin; }
+  .xterm .xterm-viewport::-webkit-scrollbar { width: 5px; }
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb { background: rgba(139,92,246,.4); border-radius: 3px; }
   /* Pause output button state */
   #kPause.latched { background: linear-gradient(135deg, #ff6b81, #f59e0b); border-color: transparent; color: #fff; }
   /* Tab bar */
@@ -275,6 +255,7 @@
 
 <script src="/xterm.js"></script>
 <script src="/fit.js"></script>
+<script src="/scrollbar.js"></script>
 <script>
 (function () {
   const termEl = document.getElementById('term');
@@ -344,62 +325,18 @@
     }, { passive: true });
   }
 
-  // ---- Gesture scrub strip (wide, touch-friendly, replaces the PC bar) ----
-  const gstrip = document.createElement('div');
-  gstrip.className = 'gstrip';
-  const gthumb = document.createElement('div');
-  gthumb.className = 'gthumb';
-  const gline = document.createElement('div');
-  gline.className = 'gline';
-  gstrip.appendChild(gthumb);
-  gstrip.appendChild(gline);
-  termEl.appendChild(gstrip); // anchored inside #term, below the header
-  let gDragging = false;
-  function gUpdateThumb() {
-    if (!viewport) return;
-    const max = viewport.scrollHeight - viewport.clientHeight;
-    const ratio = max > 0 ? viewport.scrollTop / max : 0;
-    const h = Math.max(30, viewport.clientHeight * (viewport.clientHeight / viewport.scrollHeight));
-    gthumb.style.height = h + 'px';
-    gthumb.style.top = (ratio * (viewport.clientHeight - h)) + 'px';
+  // ---- Visual scrollbar indicator (decorative; native swipe scrolls) ----
+  let sbIndicator = null;
+  function bindScrollbar() {
+    if (sbIndicator) { sbIndicator.destroy(); sbIndicator = null; }
+    const vp = termEl.querySelector('.xterm-viewport');
+    if (vp) sbIndicator = window.ScrollbarIndicator.bind(vp);
   }
-  function gScrollToFinger(y) {
-    if (!viewport) return;
-    const rect = gstrip.getBoundingClientRect();
-    const max = viewport.scrollHeight - viewport.clientHeight;
-    if (max <= 0) return;
-    const ratio = Math.min(1, Math.max(0, (y - rect.top) / rect.height));
-    viewport.scrollTop = ratio * max;
-    stickToBottom = ratio >= 0.98;
-    gline.style.top = (y - rect.top) + 'px';
-    gUpdateThumb();
-  }
-  gstrip.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    gDragging = true;
-    gstrip.classList.add('dragging');
-    gScrollToFinger(e.touches[0].clientY);
-  }, { passive: false });
-  gstrip.addEventListener('touchmove', (e) => {
-    if (!gDragging) return;
-    e.preventDefault();
-    gScrollToFinger(e.touches[0].clientY);
-  }, { passive: false });
-  gstrip.addEventListener('touchend', () => {
-    gDragging = false;
-    gstrip.classList.remove('dragging');
-    refreshScrollHint();
-  });
-  gstrip.addEventListener('mousedown', (e) => {
-    gDragging = true;
-    gstrip.classList.add('dragging');
-    gScrollToFinger(e.clientY);
-    const move = (ev) => gScrollToFinger(ev.clientY);
-    const up = () => { gDragging = false; gstrip.classList.remove('dragging'); refreshScrollHint(); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-  });
-  viewport.addEventListener('scroll', gUpdateThumb, { passive: true });
+  function updateScrollbar() { if (sbIndicator) sbIndicator.update(); }
+  bindScrollbar();
+  // Rebind after xterm writes/reflows (viewport element persists, but size
+  // changes) — update() on every scroll/write keeps the thumb accurate.
+  viewport.addEventListener('scroll', updateScrollbar, { passive: true });
 
   // ---- Pause output: buffer incoming writes while ON so the user can
   // read; resume flushes the buffer. Auto-engages when scrolling up. ----
@@ -429,7 +366,7 @@
   // bottom) pauses output so the flood can't yank the view around.
   let outgoingSinceScroll = false;
   viewport.addEventListener('scroll', () => {
-    gUpdateThumb();
+    updateScrollbar();
     if (!paused && !atBottom() && outgoingSinceScroll) {
       setPaused(true);
       outgoingSinceScroll = false;
@@ -729,6 +666,7 @@
             const data = writeQueue;
             writeQueue = '';
             origWrite(data);
+            updateScrollbar();
             if (stickToBottom) scrollToLatest();
           });
         }

@@ -106,42 +106,11 @@
     overflow-y: auto;
     padding: 6px 8px 20px;
     -webkit-overflow-scrolling: touch;
-    scrollbar-width: none; /* gesture strip replaces the thin PC scrollbar */
+    scrollbar-width: thin;
     position: relative;
   }
-  #list::-webkit-scrollbar { display: none; width: 0; }
-  /* Gesture scroll strip: invisible wide zone on the right edge. Touching it
-     jumps to that position; dragging scrubs precisely. */
-  .gstrip {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 34px;
-    touch-action: none;
-    z-index: 5;
-    cursor: pointer;
-  }
-  .gstrip .gthumb {
-    position: absolute;
-    right: 4px;
-    width: 7px;
-    border-radius: 4px;
-    background: rgba(139, 92, 246, 0.5);
-    min-height: 28px;
-    opacity: 0;
-    transition: opacity .15s ease;
-    pointer-events: none;
-  }
-  .gstrip:active .gthumb, .gstrip:hover .gthumb { opacity: 1; }
-  /* While dragging on the strip, show a subtle position line */
-  .gstrip.dragging { background: rgba(139,92,246,.06); }
-  .gstrip .gline {
-    position: absolute; left: 0; right: 0; height: 2px;
-    background: rgba(139,92,246,.35);
-    pointer-events: none; opacity: 0;
-  }
-  .gstrip.dragging .gline { opacity: 1; }
+  #list::-webkit-scrollbar { width: 5px; }
+  #list::-webkit-scrollbar-thumb { background: rgba(139,92,246,.4); border-radius: 3px; }
   .item {
     display: flex; align-items: center; gap: 12px;
     padding: 12px 12px;
@@ -173,10 +142,11 @@
     overflow-y: auto;
     padding: 14px;
     -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
+    scrollbar-width: thin;
     position: relative;
   }
-  #viewer::-webkit-scrollbar { display: none; width: 0; }
+  #viewer::-webkit-scrollbar { width: 5px; }
+  #viewer::-webkit-scrollbar-thumb { background: rgba(139,92,246,.4); border-radius: 3px; }
   #viewer pre {
     background: rgba(255,255,255,.03);
     border: 1px solid var(--border);
@@ -269,6 +239,7 @@
 <div id="viewer" class="hidden"></div>
 
 <script src="/vendor/xlsx.full.min.js"></script>
+<script src="/scrollbar.js"></script>
 <script>
 (function () {
   const listEl = document.getElementById('list');
@@ -303,95 +274,25 @@
     return map[ext] || '📄';
   }
 
-  // ---- Gesture scroll: a wide invisible strip on the right edge. Touch it
-  // to jump to that spot, drag to scrub precisely. Much better than the tiny
-  // PC scrollbar on a phone. Works on any scrollable element.
-  const gstrip = document.createElement('div');
-  gstrip.className = 'gstrip';
-  const gthumb = document.createElement('div');
-  gthumb.className = 'gthumb';
-  const gline = document.createElement('div');
-  gline.className = 'gline';
-  gstrip.appendChild(gthumb);
-  gstrip.appendChild(gline);
-  // Anchor inside the list (position:relative) so it never covers the header.
-  listEl.appendChild(gstrip);
-
-  let gTarget = null; // the scrollable element the strip currently controls
-  let gDragging = false;
-  let gRatio = 0;
-  let gBoundTarget = null;
-
-  function gUpdateThumb() {
-    if (!gTarget) return;
-    const max = gTarget.scrollHeight - gTarget.clientHeight;
-    const ratio = max > 0 ? gTarget.scrollTop / max : 0;
-    gRatio = ratio;
-    const h = Math.max(28, gTarget.clientHeight * (gTarget.clientHeight / gTarget.scrollHeight));
-    gthumb.style.height = h + 'px';
-    gthumb.style.top = (ratio * (gTarget.clientHeight - h)) + 'px';
-  }
-  function gScrollToFinger(y) {
-    if (!gTarget) return;
-    const rect = gstrip.getBoundingClientRect();
-    const max = gTarget.scrollHeight - gTarget.clientHeight;
-    if (max <= 0) return;
-    const ratio = Math.min(1, Math.max(0, (y - rect.top) / rect.height));
-    gTarget.scrollTop = ratio * max;
-    gline.style.top = (y - rect.top) + 'px';
-    gUpdateThumb();
-  }
-  gstrip.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    gDragging = true;
-    gstrip.classList.add('dragging');
-    gScrollToFinger(e.touches[0].clientY);
-  }, { passive: false });
-  gstrip.addEventListener('touchmove', (e) => {
-    if (!gDragging) return;
-    e.preventDefault();
-    gScrollToFinger(e.touches[0].clientY);
-  }, { passive: false });
-  gstrip.addEventListener('touchend', () => {
-    gDragging = false;
-    gstrip.classList.remove('dragging');
-  });
-  // Mouse support (desktop testing)
-  gstrip.addEventListener('mousedown', (e) => {
-    gDragging = true;
-    gstrip.classList.add('dragging');
-    gScrollToFinger(e.clientY);
-    const move = (ev) => gScrollToFinger(ev.clientY);
-    const up = () => { gDragging = false; gstrip.classList.remove('dragging'); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-  });
-
-  function gBind(target) {
-    if (!target) { gstrip.style.display = 'none'; gTarget = null; return; }
-    gTarget = target;
-    // Move the strip into the active scroll container so it never covers
-    // the header or the wrong panel.
-    if (gBoundTarget !== target) {
-      if (gBoundTarget) gBoundTarget.removeEventListener('scroll', gUpdateThumb, { passive: true });
-      target.appendChild(gstrip);
-      target.addEventListener('scroll', gUpdateThumb, { passive: true });
-      gBoundTarget = target;
+  // ---- Visual scrollbar indicator (decorative; native swipe scrolls) ----
+  let sbIndicator = null;
+  function syncScrollbar() {
+    if (sbIndicator) { sbIndicator.destroy(); sbIndicator = null; }
+    const target = viewerEl.classList.contains('hidden') ? listEl : viewerEl;
+    if (target) {
+      sbIndicator = window.ScrollbarIndicator.bind(target);
+      requestAnimationFrame(() => { if (sbIndicator) sbIndicator.update(); });
     }
-    gstrip.style.display = 'block';
-    gUpdateThumb();
   }
-  function gHide() { gBind(null); }
-
-  // Bind to whichever panel is visible.
-  function syncGestureTarget() {
-    if (!viewerEl.classList.contains('hidden')) gBind(viewerEl);
-    else gBind(listEl);
-  }
-  // Rebind + update after every render.
   const origShowList = showList, origShowViewer = showViewer;
-  showList = function () { origShowList(); requestAnimationFrame(syncGestureTarget); };
-  showViewer = function () { origShowViewer(); requestAnimationFrame(syncGestureTarget); };
+  showList = function () { origShowList(); requestAnimationFrame(syncScrollbar); };
+  showViewer = function () { origShowViewer(); requestAnimationFrame(syncScrollbar); };
+  // Update the indicator after listings render (content height changes).
+  const origLoadDir = loadDir;
+  loadDir = async function (p) {
+    await origLoadDir(p);
+    if (sbIndicator) sbIndicator.update();
+  };
 
   async function api(url) {
     const r = await fetch(url, { headers: auth });
@@ -498,7 +399,7 @@
       if (!j.entries.length) listEl.innerHTML = '<div id="msg">Empty folder</div>';
       // Restore scroll position for THIS path only (fresh folders start at top).
       listEl.scrollTop = scrollPositions.get(absPath) || 0;
-      gUpdateThumb();
+      if (sbIndicator) sbIndicator.update();
       // Vault search box (only when inside the vault root)
       if (absPath === (roots.find((r) => r.includes('Obsidian')) || '')) addSearchBox();
     } catch (err) {
@@ -590,7 +491,7 @@
           html += '</table></div>';
           if (!rows.length) html += '<div id="msg">Empty sheet</div>';
           viewerEl.innerHTML = '<div style="margin-bottom:10px;color:var(--muted);font-size:12px">' + name + '</div>' + html;
-          requestAnimationFrame(gUpdateThumb);
+          requestAnimationFrame(() => { if (sbIndicator) sbIndicator.update(); });
           const csvBlob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
           const csvUrl = URL.createObjectURL(csvBlob);
           document.getElementById('csvBtn').addEventListener('click', () => {
@@ -644,7 +545,7 @@
     } catch (err) {
       listEl.innerHTML = '<div id="msg">Error: ' + err.message + '</div>';
     }
-    syncGestureTarget();
+    syncScrollbar();
   })();
 })();
 </script>
