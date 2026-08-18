@@ -625,11 +625,13 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 const clients = new Map();
 // Runs survive socket disconnects: an in-flight agent run keeps going on the
 // PC, buffers its output, and a reconnecting client can attach to replay it.
-const runs = new Map(); // conversation sessionId -> { child, buffer, stderrTail, wsRef, interrupted, done, exitCode }
+const runs = new Map(); // conversation sessionId -> { child, buffer, stderrTail, wsSet, interrupted, done, exitCode }
 
 function runSend(run, obj) {
-  if (run.wsRef && run.wsRef.readyState === WebSocket.OPEN) {
-    run.wsRef.send(JSON.stringify(obj));
+  for (const ws of run.wsSet) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(obj));
+    }
   }
 }
 
@@ -668,7 +670,8 @@ wss.on('connection', (ws, req) => {
         return;
       }
       // Replay buffered output for this run so the view catches up.
-      run.wsRef = ws;
+      // Multiple clients may attach to the same run (phone + desktop tab).
+      run.wsSet.add(ws);
       if (!run.done) {
         send(clientId, { type: 'run_start', sessionId: sid });
         for (const t of run.buffer) send(clientId, { type: t.type, text: t.text, name: t.name, description: t.description });
@@ -684,7 +687,7 @@ wss.on('connection', (ws, req) => {
     if (client) {
       const sid = client.sessionId;
       const run = sid && runs.get(sid);
-      if (run && run.wsRef === ws) run.wsRef = null;
+      if (run) run.wsSet.delete(ws);
     }
     clients.delete(clientId);
   });
@@ -893,9 +896,10 @@ function handleChat(clientId, msg) {
     const arg = rest.join(' ');
     const slash = SLASH_COMMANDS[cmd.toLowerCase()];
     if (!slash) {
-      const conv = getOrCreateConv(msg.sessionId || randomUUID());
+      // Don't create a phantom conversation for an unknown command.
+      const sid = msg.sessionId || null;
       send(clientId, { type: 'error', message: `Unknown command /${cmd}. Type /help for the list.` });
-      send(clientId, { type: 'run_end', sessionId: conv.id, exitCode: 1 });
+      send(clientId, { type: 'run_end', sessionId: sid, exitCode: 1 });
       return;
     }
     const conv = getOrCreateConv(msg.sessionId || randomUUID());
@@ -915,7 +919,8 @@ function handleChat(clientId, msg) {
     return;
   }
 
-  const conv = getOrCreateConv(sessionId);
+  const conv = getOrCreateConv(sessionId || randomUUID());
+  const runSessionId = conv.id;
   conv.messages.push({ role: 'user', content: query, ts: new Date().toISOString() });
   conv.updatedAt = new Date().toISOString();
   if (!conv.title) conv.title = query.length > 60 ? query.slice(0, 60) + '…' : query;
@@ -949,15 +954,18 @@ function handleChat(clientId, msg) {
     args.push('--session', s.resumeSession);
   }
 
-  send(clientId, { type: 'run_start', sessionId });
+  send(clientId, { type: 'run_start', sessionId: runSessionId });
+  // Remember which run this client started so a bare {type:'stop'} can
+  // target it (the UI also sends sessionId explicitly).
+  client.sessionId = runSessionId;
 
   const child = spawn(process.execPath, [CMD_ENTRY, ...args], {
     cwd,
     env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
     windowsHide: true,
   });
-  const run = { child, buffer: [], stderrTail: '', wsRef: client.ws, interrupted: false, done: false, exitCode: null };
-  runs.set(sessionId, run);
+  const run = { child, buffer: [], stderrTail: '', wsSet: new Set([client.ws]), interrupted: false, done: false, exitCode: null };
+  runs.set(runSessionId, run);
 
   let assistantText = '';
   let lineBuffer = '';
@@ -980,9 +988,12 @@ function handleChat(clientId, msg) {
         if (ev.type === 'text_delta') {
           assistantText += ev.delta || '';
           run.buffer.push({ type: 'delta', text: ev.delta || '' });
+          // Cap the replay buffer so long runs don't grow memory unbounded.
+          if (run.buffer.length > 4000) run.buffer.splice(0, run.buffer.length - 4000);
           runSend(run, { type: 'delta', text: ev.delta || '' });
         } else if (ev.type === 'tool_running') {
           run.buffer.push({ type: 'tool', name: ev.toolName, description: ev.description || '' });
+          if (run.buffer.length > 4000) run.buffer.splice(0, run.buffer.length - 4000);
           runSend(run, { type: 'tool', name: ev.toolName, description: ev.description || '' });
         }
       }
@@ -1001,9 +1012,9 @@ function handleChat(clientId, msg) {
     runSend(run, { type: 'error', message: `Failed to start Command Code: ${err.message}` });
     run.done = true;
     run.exitCode = 1;
-    runSend(run, { type: 'run_end', sessionId, exitCode: 1, interrupted: false });
-    run.wsRef = null;
-    setTimeout(() => runs.delete(sessionId), 60000);
+    runSend(run, { type: 'run_end', sessionId: runSessionId, exitCode: 1, interrupted: false });
+    run.wsSet.clear();
+    setTimeout(() => runs.delete(runSessionId), 60000);
   });
 
   child.on('close', (code) => {
@@ -1018,11 +1029,11 @@ function handleChat(clientId, msg) {
     }
     conv.updatedAt = new Date().toISOString();
     saveHistory();
-    runSend(run, { type: 'run_end', sessionId, exitCode: code, interrupted });
-    run.wsRef = null;
+    runSend(run, { type: 'run_end', sessionId: runSessionId, exitCode: code, interrupted });
+    run.wsSet.clear();
     // Keep the run briefly so a reconnecting client can attach and learn it
     // finished, then drop it to avoid unbounded memory growth.
-    setTimeout(() => runs.delete(sessionId), 60000);
+    setTimeout(() => runs.delete(runSessionId), 60000);
   });
 }
 
@@ -1082,5 +1093,8 @@ server.listen(PORT, HOST, () => {
   if (!TOKEN) {
     console.log('WARNING: No CMD_REMOTE_TOKEN set — anyone who can reach this port can control your PC.');
     console.log('Set CMD_REMOTE_TOKEN (or put it in .env) and restart.');
+  } else if (TOKEN === 'change-me' || TOKEN === '<token>') {
+    console.log('WARNING: CMD_REMOTE_TOKEN is still the weak default ("' + TOKEN + '").');
+    console.log('Generate a real random token and update .env, then restart.');
   }
 });

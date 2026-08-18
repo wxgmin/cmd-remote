@@ -28,6 +28,7 @@ const BROWSERS = [
 ];
 
 let browserProc = null;
+let startingPromise = null; // mutex: one spawn in flight at a time
 
 function findBrowser() {
   for (const b of BROWSERS) {
@@ -46,28 +47,39 @@ async function cdpAlive() {
 export async function startSharedBrowser() {
   // Already running (this process or an external one)?
   if (browserProc || await cdpAlive()) return browserProc;
-  const bin = findBrowser();
-  if (!bin) return null;
-  try { fs.mkdirSync(PROFILE_DIR, { recursive: true }); } catch {}
-  const args = [
-    `--remote-debugging-port=${CDP_PORT}`,
-    `--user-data-dir=${PROFILE_DIR}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-sync',
-    '--disable-features=msEdgeFirstRunExperience',
-    '--window-size=1280,900',
-    'about:blank',
-  ];
-  browserProc = spawn(bin, args, { detached: false, windowsHide: true, stdio: 'ignore' });
-  browserProc.on('exit', () => { browserProc = null; });
-  browserProc.on('error', () => { browserProc = null; });
-  // Give it a moment to open the debug port.
-  for (let i = 0; i < 20; i++) {
-    await new Promise((r) => setTimeout(r, 250));
-    if (await cdpAlive()) break;
-  }
-  return browserProc;
+  // Mutex: if a spawn is already in flight, wait for it.
+  if (startingPromise) return startingPromise;
+  startingPromise = (async () => {
+    try {
+      if (await cdpAlive()) return browserProc; // another call won the race
+      const bin = findBrowser();
+      if (!bin) return null;
+      try { fs.mkdirSync(PROFILE_DIR, { recursive: true }); } catch {}
+      const args = [
+        `--remote-debugging-port=${CDP_PORT}`,
+        `--user-data-dir=${PROFILE_DIR}`,
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-sync',
+        '--disable-features=msEdgeFirstRunExperience',
+        '--window-size=1280,900',
+        'about:blank',
+      ];
+      const proc = spawn(bin, args, { detached: false, windowsHide: true, stdio: 'ignore' });
+      browserProc = proc;
+      proc.on('exit', () => { if (browserProc === proc) browserProc = null; });
+      proc.on('error', () => { if (browserProc === proc) browserProc = null; });
+      // Give it a moment to open the debug port.
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 250));
+        if (await cdpAlive()) break;
+      }
+      return browserProc;
+    } finally {
+      startingPromise = null;
+    }
+  })();
+  return startingPromise;
 }
 
 async function cdpFetch(pathname) {
@@ -97,7 +109,8 @@ async function cdpCommand(tabWsUrl, method, params = {}) {
         }
       } catch {}
     });
-    ws.on('error', (e) => { clearTimeout(to); reject(e); });
+    ws.on('error', (e) => { clearTimeout(to); try { ws.close(); } catch {} reject(e); });
+    ws.on('close', () => { clearTimeout(to); try { ws.close(); } catch {} reject(new Error('CDP closed')); });
   });
 }
 

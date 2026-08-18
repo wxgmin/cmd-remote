@@ -96,8 +96,8 @@ wss.on('connection', (ws, req) => {
   let s = wanted && sessions.get(wanted);
 
   if (s && s.proc && !s.exited) {
-    // Reattach to an existing background PTY.
-    s.ws = ws;
+    // Reattach to an existing background PTY. Multiple sockets may attach.
+    s.wsSet.add(ws);
     s.lastActive = Date.now();
     ws.send(JSON.stringify({ type: 'hello', session: s.id, replay: true }));
     replayBuffer(s, ws);
@@ -114,38 +114,46 @@ wss.on('connection', (ws, req) => {
       cwd: WORK_DIR,
       env: { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1' },
     });
-    s = { id, proc, ws, buffer: '', cols: 100, rows: 30, createdAt: Date.now(), lastActive: Date.now(), exited: false };
+    s = { id, proc, wsSet: new Set([ws]), buffer: '', cols: 100, rows: 30, createdAt: Date.now(), lastActive: Date.now(), exited: false };
     sessions.set(id, s);
     ws.send(JSON.stringify({ type: 'hello', session: id, replay: false }));
     ws.send(JSON.stringify({ type: 'size', cols: s.cols, rows: s.rows }));
     proc.onData((data) => {
       s.buffer = (s.buffer + data).slice(-262144); // keep last 256 KB
-      if (s.ws && s.ws.readyState === WebSocket.OPEN) {
-        s.ws.send(JSON.stringify({ type: 'output', data }));
+      for (const w of s.wsSet) {
+        if (w.readyState === WebSocket.OPEN) {
+          w.send(JSON.stringify({ type: 'output', data }));
+        }
       }
     });
     proc.onExit(() => {
       s.exited = true;
       sessions.delete(s.id);
-      if (s.ws && s.ws.readyState === WebSocket.OPEN) {
-        s.ws.send(JSON.stringify({ type: 'exit' }));
+      for (const w of s.wsSet) {
+        if (w.readyState === WebSocket.OPEN) {
+          w.send(JSON.stringify({ type: 'exit' }));
+        }
       }
     });
   }
 
   ws.on('message', (data) => {
+    s.lastActive = Date.now();
     try {
       const msg = JSON.parse(data.toString());
       if (msg.type === 'input') {
         if (s.proc) s.proc.write(msg.data);
       } else if (msg.type === 'resize') {
-        if (s.proc) s.proc.resize(msg.cols, msg.rows);
+        if (s.proc && Number.isInteger(msg.cols) && Number.isInteger(msg.rows) && msg.cols > 0 && msg.rows > 0) s.proc.resize(msg.cols, msg.rows);
         s.cols = msg.cols; s.rows = msg.rows;
       } else if (msg.type === 'end') {
         // Tab closed: kill this session only.
         try { s.proc.kill(); } catch {}
         sessions.delete(s.id);
-        if (s.ws && s.ws.readyState === WebSocket.OPEN) s.ws.close();
+        for (const w of s.wsSet) {
+          if (w.readyState === WebSocket.OPEN) w.close();
+        }
+        s.wsSet.clear();
       }
     } catch {
       try { if (s.proc) s.proc.write(data.toString()); } catch {}
@@ -153,7 +161,7 @@ wss.on('connection', (ws, req) => {
   });
   ws.on('close', () => {
     // Detach, do NOT kill — the PTY keeps running in the background.
-    if (s && s.ws === ws) s.ws = null;
+    if (s) s.wsSet.delete(ws);
     if (s) s.lastActive = Date.now();
   });
 });
@@ -170,6 +178,23 @@ app.get('/api/tty/sessions', (req, res) => {
   res.json({ sessions: list });
 });
 
+// Orphaned-session reaper: kill PTYs with no attached socket that have been
+// idle (no activity) for over an hour, so abandoned sessions don't leak
+// --yolo processes forever.
+setInterval(() => {
+  const now = Date.now();
+  const IDLE_MS = 60 * 60 * 1000;
+  for (const s of sessions.values()) {
+    if (s.exited) continue;
+    const idle = now - (s.lastActive || 0);
+    if (s.wsSet.size === 0 && idle > IDLE_MS) {
+      try { s.proc.kill(); } catch {}
+      s.exited = true;
+      sessions.delete(s.id);
+    }
+  }
+}, 10 * 60 * 1000); // check every 10 minutes
+
 // End a session (tab closed) — works for attached AND background sessions.
 app.post('/api/tty/sessions/:id/end', (req, res) => {
   if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
@@ -179,7 +204,10 @@ app.post('/api/tty/sessions/:id/end', (req, res) => {
   if (s) {
     try { s.proc.kill(); } catch {}
     sessions.delete(s.id);
-    if (s.ws && s.ws.readyState === WebSocket.OPEN) s.ws.close();
+    for (const w of s.wsSet) {
+      if (w.readyState === WebSocket.OPEN) w.close();
+    }
+    s.wsSet.clear();
   }
   res.json({ ok: true });
 });

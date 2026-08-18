@@ -452,6 +452,8 @@
   let history = [];
   let syncSessions = [];
   let paletteOpen = false;
+  // Sessions with a run in flight (may be background conversations).
+  const runsInFlight = new Set();
 
   // Persist the last conversation so a full app restart can reattach to an
   // in-flight run or reopen the same conversation.
@@ -596,6 +598,15 @@
       else if (m.role === 'assistant') addMsg(m.content, 'assistant');
       else if (m.role === 'error') addMsg(m.content, 'error');
     }
+    // If this conversation has a run in flight, show the busy UI for it.
+    if (runsInFlight.has(currentSessionId)) {
+      busy = true;
+      sendBtn.disabled = true;
+      stopBtn.style.display = 'flex';
+      currentAssistantEl = null;
+    } else {
+      finishRun();
+    }
     renderSessionList();
     closeSidebarOnMobile();
     // Attach to an in-flight run for this conversation (replays missed output).
@@ -659,11 +670,11 @@
   }
 
   function newChat() {
-    if (busy) return;
     currentSessionId = null;
     pendingResumeId = null;
     chatTitle.textContent = 'New chat';
     messagesEl.innerHTML = '';
+    finishRun(); // new conversation is never busy
     renderSessionList();
     closeSidebarOnMobile();
     // No inputEl.focus() — auto-focusing pops the soft keyboard on mobile.
@@ -696,42 +707,65 @@
 
   function handleMessage(msg) {
     switch (msg.type) {
-      case 'run_start':
-        busy = true;
-        if (msg.sessionId) currentSessionId = msg.sessionId;
-        persistSession();
-        sendBtn.disabled = true;
-        stopBtn.style.display = 'flex';
+      case 'run_start': {
+        // A run started (this session or another one in the background).
+        const sid = msg.sessionId;
+        if (sid) runsInFlight.add(sid);
+        if (sid && currentSessionId === sid) {
+          busy = true;
+          sendBtn.disabled = true;
+          stopBtn.style.display = 'flex';
+          currentAssistantEl = null;
+        }
+        if (sid) persistSession();
         break;
+      }
       case 'tool':
-        addMsg('🛠 ' + msg.name + ' · ' + (msg.description || ''), 'tool');
+        // Only render tool messages for the session currently on screen.
+        if (!msg.sessionId || msg.sessionId === currentSessionId) {
+          addMsg('🛠 ' + msg.name + ' · ' + (msg.description || ''), 'tool');
+        }
         break;
-      case 'delta':
+      case 'delta': {
+        // Ignore output from background conversations.
+        if (msg.sessionId && msg.sessionId !== currentSessionId) break;
         if (!currentAssistantEl) currentAssistantEl = addMsg('', 'assistant cursor');
         currentAssistantEl.textContent += msg.text;
         currentAssistantEl.classList.remove('cursor');
         currentAssistantEl.classList.add('cursor');
         if (stickToBottom) scrollToLatest();
         break;
-      case 'stderr':
+      }
+      case 'stderr': {
+        if (msg.sessionId && msg.sessionId !== currentSessionId) break;
         if (!currentAssistantEl) addMsg(msg.text, 'thinking');
         break;
-      case 'run_end':
-        if (msg.sessionId) {
-          currentSessionId = msg.sessionId;
+      }
+      case 'run_end': {
+        const sid = msg.sessionId;
+        if (sid) runsInFlight.delete(sid);
+        if (sid) {
+          currentSessionId = sid; // server confirms the real id
           persistSession();
         }
-        finishRun();
+        // Only clear the busy UI if the run that ended belongs to the
+        // conversation being viewed.
+        if (sid === null || sid === currentSessionId) {
+          finishRun();
+        }
         loadSessions();
         loadSyncSessions();
         break;
+      }
       case 'cleared':
         newChat();
         break;
-      case 'error':
+      case 'error': {
+        if (msg.sessionId && msg.sessionId !== currentSessionId) break;
         addMsg(msg.message, 'error');
         finishRun();
         break;
+      }
     }
   }
 
@@ -745,6 +779,8 @@
 
   function send() {
     const text = inputEl.value.trim();
+    // Only blocked when the VIEWED conversation is busy (background runs in
+    // other conversations don't block sending here).
     if (!text || busy || !ws || ws.readyState !== WebSocket.OPEN) return;
     addMsg(text, 'user');
     inputEl.value = '';

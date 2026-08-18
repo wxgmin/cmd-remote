@@ -530,6 +530,9 @@
       } else {
         currentTab = null;
         renderTabs();
+        // Close the socket too so a late server message can't crash the UI.
+        if (ws) { try { ws.close(); } catch {} ws = null; }
+        clearTimeout(reconnectTimer);
         setStatus('off', 'No tabs. Tap + to create one.');
       }
     } else {
@@ -562,7 +565,7 @@
     sock.onclose = () => {
       if (sock !== ws) return; // stale socket
       // If this tab was closed while connecting, don't reconnect to it.
-      if (!tabs.find((x) => x.id === currentTab.id)) return;
+      if (!currentTab || !tabs.find((x) => x.id === currentTab.id)) return;
       setStatus('off', 'disconnected. Tap to reconnect');
       reconnectTimer = setTimeout(connect, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, 15000);

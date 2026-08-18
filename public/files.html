@@ -245,6 +245,7 @@
   let stack = []; // directory navigation stack (absolute paths)
   let searchBox = null;
   let listScroll = 0; // preserve scroll position across re-renders
+  let lastBlobUrl = null; // revoke previous object URLs to avoid leaks
 
   function fmtSize(n) {
     if (!n && n !== 0) return '';
@@ -282,20 +283,21 @@
 
   function renderRoots() {
     rootsEl.innerHTML = '';
-    const labels = { work: '💻 Working dir', projects: '🤖 Agent sessions', vault: '🗂️ Obsidian vault' };
-    // Build root chips from the API roots with friendly labels.
+    // Build root chips from the API roots with friendly labels. Match each
+    // root by its path (not by position, which breaks when a root is absent).
     const rootMeta = [
-      { name: '💻 Working dir', find: (r) => r },
-      { name: '🤖 Agent sessions', find: (r) => r.endsWith(pathSep('projects')) || r.includes('.commandcode') },
+      { name: '💻 Working dir', find: (r) => !r.includes('.commandcode') && !r.includes('Obsidian') },
+      { name: '🤖 Agent sessions', find: (r) => r.includes('.commandcode') },
       { name: '🗂️ Obsidian vault', find: (r) => r.includes('Obsidian') },
     ];
-    roots.forEach((r, i) => {
+    for (const r of roots) {
+      const meta = rootMeta.find((m) => m.find(r));
       const chip = document.createElement('button');
       chip.className = 'root-chip';
-      chip.textContent = rootMeta[i % rootMeta.length]?.name || r;
+      chip.textContent = meta ? meta.name : r;
       chip.addEventListener('click', () => { stack = [r]; loadDir(r); });
       rootsEl.appendChild(chip);
-    });
+    }
   }
 
   function pathSep() { return '/'; }
@@ -441,6 +443,8 @@
       if (ct.startsWith('image/')) {
         const blob = await r.blob();
         const url = URL.createObjectURL(blob);
+        if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+        lastBlobUrl = url;
         viewerEl.innerHTML = '<div style="margin-bottom:10px;color:var(--muted);font-size:12px">' + name + '</div><img src="' + url + '" alt="' + name + '">';
       } else {
         const text = await r.text();

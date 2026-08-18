@@ -18,10 +18,17 @@ if not exist node_modules (
   )
 )
 
-REM --- Ensure .env exists ---
+REM --- Ensure .env exists with a RANDOM token (never the weak default) ---
 if not exist .env (
-  echo No .env found. Copying template...
-  copy .env.example .env >nul
+  echo No .env found. Generating a random access token...
+  node -e "require('fs').writeFileSync(process.env.TEMP + '\\cmd-token.txt', require('crypto').randomBytes(16).toString('hex'))"
+  set /p TOKEN=<%TEMP%\cmd-token.txt
+  (
+    echo # cmd-remote configuration
+    echo CMD_REMOTE_TOKEN=!TOKEN!
+  ) > .env
+  del "%TEMP%\cmd-token.txt" 2>nul
+  echo Token generated. Treat it like a password.
 )
 
 REM --- Try to open the firewall ports (needs admin; may prompt UAC) ---

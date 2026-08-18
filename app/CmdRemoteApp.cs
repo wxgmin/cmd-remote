@@ -231,19 +231,80 @@ namespace CmdRemoteApp
 
         private void EnsureToken()
         {
-            if (token.Length > 0) return;
             try
             {
-                if (File.Exists(EnvPath))
+                if (token.Length == 0)
                 {
-                    foreach (var line in File.ReadAllLines(EnvPath))
+                    if (File.Exists(EnvPath))
                     {
-                        var parts = line.Split('=');
-                        if (parts.Length == 2 && parts[0].Trim() == "CMD_REMOTE_TOKEN") { token = parts[1].Trim(); return; }
+                        foreach (var line in File.ReadAllLines(EnvPath))
+                        {
+                            var parts = line.Split('=');
+                            if (parts.Length == 2 && parts[0].Trim() == "CMD_REMOTE_TOKEN") { token = parts[1].Trim(); break; }
+                        }
+                    }
+                    if (token.Length == 0)
+                    {
+                        token = Guid.NewGuid().ToString("N").Substring(0, 32);
+                        try { File.WriteAllText(EnvPath, "# cmd-remote configuration\r\nCMD_REMOTE_TOKEN=" + token + "\r\n"); } catch { }
                     }
                 }
-                token = Guid.NewGuid().ToString("N").Substring(0, 32);
-                File.WriteAllText(EnvPath, "# cmd-remote configuration\r\nCMD_REMOTE_TOKEN=" + token + "\r\n");
+                // Keep any dev repo .env in sync so a manually-started
+                // `node server.js` from the repo uses the SAME token.
+                SyncRepoEnv();
+            }
+            catch { }
+        }
+
+        // If a cmd-remote checkout exists near the app (or in common dev
+        // locations), align its .env token with ours so both setups agree.
+        // Only overwrite when the repo token is missing or the weak default
+        // "change-me" — never clobber a token the user set by hand.
+        private void SyncRepoEnv()
+        {
+            try
+            {
+                string[] candidates = {
+                    Path.Combine(appDir, "..", "..", "cmd-remote", ".env"),          // C:\Users\Waiz\cmd-remote\.env
+                    Path.Combine(appDir, "cmd-remote", ".env"),
+                };
+                foreach (var p in candidates)
+                {
+                    var full = Path.GetFullPath(p);
+                    if (!File.Exists(full)) continue;
+                    string[] lines;
+                    try { lines = File.ReadAllLines(full); } catch { continue; }
+                    string repoToken = "";
+                    foreach (var line in lines)
+                    {
+                        if (line.StartsWith("CMD_REMOTE_TOKEN=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            repoToken = line.Substring("CMD_REMOTE_TOKEN=".Length).Trim();
+                            break;
+                        }
+                    }
+                    // Only sync if missing, empty, or the known weak default.
+                    if (repoToken.Length == 0 || repoToken == "change-me" || repoToken == "<token>")
+                    {
+                        bool wrote = false;
+                        for (int i = 0; i < lines.Length; i++)
+                        {
+                            if (lines[i].StartsWith("CMD_REMOTE_TOKEN=", StringComparison.OrdinalIgnoreCase))
+                            {
+                                lines[i] = "CMD_REMOTE_TOKEN=" + token;
+                                wrote = true;
+                                break;
+                            }
+                        }
+                        if (!wrote)
+                        {
+                            var list = new System.Collections.Generic.List<string>(lines);
+                            list.Add("CMD_REMOTE_TOKEN=" + token);
+                            lines = list.ToArray();
+                        }
+                        try { File.WriteAllLines(full, lines); } catch { }
+                    }
+                }
             }
             catch { }
         }
@@ -311,10 +372,31 @@ namespace CmdRemoteApp
                 SetStatus("Starting...", "Please wait a moment.", Amber);
                 var node = Path.Combine(appDir, "node.exe");
                 if (!File.Exists(node)) node = "node";
+                // Run the servers from the user's home so the agent works on
+                // real user files (NOT the AppData install dir). WORK_DIR can
+                // be overridden with an env var in .env if desired.
+                var workDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                try
+                {
+                    var envPath = Path.Combine(appDir, ".env");
+                    if (File.Exists(envPath))
+                    {
+                        foreach (var line in File.ReadAllLines(envPath))
+                        {
+                            if (line.StartsWith("WORK_DIR=", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var v = line.Substring("WORK_DIR=".Length).Trim().Trim('"');
+                                if (v.Length > 0 && Directory.Exists(v)) workDir = v;
+                                break;
+                            }
+                        }
+                    }
+                }
+                catch { }
                 if (!IsUp(8787))
-                    serverProc = Process.Start(new ProcessStartInfo(node, "server.js") { WorkingDirectory = appDir, UseShellExecute = false, CreateNoWindow = true });
+                    serverProc = Process.Start(new ProcessStartInfo(node, "\"" + Path.Combine(appDir, "server.js") + "\"") { WorkingDirectory = workDir, UseShellExecute = false, CreateNoWindow = true });
                 if (!IsUp(8788))
-                    ttyProc = Process.Start(new ProcessStartInfo(node, "tty-server.mjs") { WorkingDirectory = appDir, UseShellExecute = false, CreateNoWindow = true });
+                    ttyProc = Process.Start(new ProcessStartInfo(node, "\"" + Path.Combine(appDir, "tty-server.mjs") + "\"") { WorkingDirectory = workDir, UseShellExecute = false, CreateNoWindow = true });
                 for (int i = 0; i < 10; i++)
                 {
                     System.Threading.Thread.Sleep(400);
@@ -341,24 +423,25 @@ namespace CmdRemoteApp
         {
             try
             {
-                foreach (var p in Process.GetProcessesByName("node"))
+                // wmic is removed on Windows 11 24H2+; use Get-CimInstance.
+                using (var cmd = new Process())
                 {
-                    try
+                    cmd.StartInfo.FileName = "powershell.exe";
+                    cmd.StartInfo.Arguments = "-NoProfile -Command \"Get-CimInstance Win32_Process -Filter 'Name=''node.exe''' | Where-Object { $_.CommandLine -match 'server\\.js|tty-server\\.mjs' } | ForEach-Object { $_.ProcessId }\"";
+                    cmd.StartInfo.UseShellExecute = false;
+                    cmd.StartInfo.CreateNoWindow = true;
+                    cmd.StartInfo.RedirectStandardOutput = true;
+                    cmd.Start();
+                    var output = cmd.StandardOutput.ReadToEnd();
+                    cmd.WaitForExit(2000);
+                    foreach (var line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
                     {
-                        using (var cmd = new Process())
+                        int pid;
+                        if (int.TryParse(line.Trim(), out pid))
                         {
-                            cmd.StartInfo.FileName = "cmd.exe";
-                            cmd.StartInfo.Arguments = "/c wmic process where \"ProcessId=" + p.Id + "\" get CommandLine /value";
-                            cmd.StartInfo.UseShellExecute = false;
-                            cmd.StartInfo.CreateNoWindow = true;
-                            cmd.StartInfo.RedirectStandardOutput = true;
-                            cmd.Start();
-                            var cl = cmd.StandardOutput.ReadToEnd();
-                            cmd.WaitForExit(2000);
-                            if (cl.Contains("server.js") || cl.Contains("tty-server.mjs")) p.Kill();
+                            try { Process.GetProcessById(pid).Kill(); } catch { }
                         }
                     }
-                    catch { }
                 }
             }
             catch { }
