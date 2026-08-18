@@ -10,6 +10,7 @@ import os from 'os';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { tailscaleIP, tailscaleTLS, lanIPs } from './lib/util.mjs';
+import { browserRouter, startSharedBrowser } from './browser-server.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -134,6 +135,7 @@ app.get('/panel', (req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, 'panel.html'));
 });
 app.use(express.static(PUBLIC_DIR, { index: false }));
+app.use('/api/browser', browserRouter(authOk));
 
 app.get('/api/status', (req, res) => {
   if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
@@ -455,9 +457,12 @@ app.get('/api/fs/list', (req, res) => {
   res.json({ path: p, roots: fsRoots(), entries });
 });
 
-// Text/image file content, capped to keep the phone happy.
+// Text/image/file content, capped to keep the phone happy.
 const TEXT_EXT = new Set(['.md', '.txt', '.js', '.mjs', '.ts', '.py', '.json', '.html', '.css', '.yml', '.yaml', '.xml', '.log', '.csv', '.ini', '.cfg', '.toml', '.sh', '.bat', '.cmd', '.cs', '.java', '.rs', '.go', '.c', '.h', '.cpp', '.env.example', '.gitignore', '']);
 const IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.bmp', '.ico']);
+// Binary-ish types the phone previews client-side (SheetJS parses xlsx; the
+// browser renders PDFs natively). Streamed as octet-stream with a size cap.
+const BIN_EXT = new Set(['.xlsx', '.xls', '.tsv', '.pdf', '.docx', '.doc', '.pptx', '.zip', '.tar', '.gz']);
 app.get('/api/fs/file', (req, res) => {
   if (!authOk(req)) return res.status(401).json({ error: 'Unauthorized' });
   const p = safeFsPath(req.query.path);
@@ -477,6 +482,15 @@ app.get('/api/fs/file', (req, res) => {
     if (TEXT_EXT.has(ext)) {
       if (st.size > 1024 * 1024) return res.status(413).json({ error: 'file too large to preview' });
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      fs.createReadStream(p).pipe(res);
+      return;
+    }
+    if (BIN_EXT.has(ext)) {
+      // SheetJS needs the raw bytes; PDF needs the raw bytes for the viewer.
+      const cap = ext === '.pdf' ? 20 * 1024 * 1024 : 10 * 1024 * 1024;
+      if (st.size > cap) return res.status(413).json({ error: 'file too large to open' });
+      const mime = { '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xls': 'application/vnd.ms-excel', '.tsv': 'text/tab-separated-values', '.pdf': 'application/pdf' }[ext] || 'application/octet-stream';
+      res.setHeader('Content-Type', mime);
       fs.createReadStream(p).pipe(res);
       return;
     }
@@ -1060,6 +1074,11 @@ server.listen(PORT, HOST, () => {
   }
   console.log(`  Command Code entry: ${CMD_ENTRY}`);
   console.log(`  Working directory: ${WORK_DIR}`);
+  // Launch the shared browser for Playwright MCP + the phone's live view
+  // (lazy; each /api/browser call also self-heals if it exited).
+  startSharedBrowser().then((p) => {
+    console.log(p ? `  Shared browser: up (CDP port 9222)` : '  Shared browser: not found — live browser view disabled');
+  });
   if (!TOKEN) {
     console.log('WARNING: No CMD_REMOTE_TOKEN set — anyone who can reach this port can control your PC.');
     console.log('Set CMD_REMOTE_TOKEN (or put it in .env) and restart.');

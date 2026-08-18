@@ -74,8 +74,24 @@ wants cmd-remote installed, you can set it up from the repo itself:
      `http://<host>:8788` base and the token separately; the Android app accepts both.
    - Give the user BOTH the URL line AND the token explicitly — do not make them
      grep `.env` or the logs themselves.
-3. For a phone on the same Wi-Fi, the LAN URL works immediately. For anywhere-access,
-   the user must be signed into the same Tailscale tailnet on the phone.
+ 3. For a phone on the same Wi-Fi, the LAN URL works immediately. For anywhere-access,
+    the user must be signed into the same Tailscale tailnet on the phone.
+
+## Live browser view (Playwright MCP + shared browser)
+
+cmd-remote starts a **shared browser** (Edge/Chrome) with a CDP debug port
+(`--remote-debugging-port=9222`, profile in `~/.cmd-remote/browser-profile`). Playwright
+MCP connects to it via `--cdp-endpoint http://127.0.0.1:9222` (see `~/.commandcode/mcp.json`),
+so the agent and the phone's **🌐 Browser page** drive the SAME browser:
+
+- The user watches the agent's browser live from the phone (`/browser.html` — live
+  screenshots every ~1.5 s, tab strip, address bar, tap-to-click, type row).
+- Browser API (all auth-gated): `GET /api/browser/tabs`, `GET /api/browser/screenshot`,
+  `POST /api/browser/navigate|click|type|eval|newtab`.
+- If the browser isn't running, the endpoints return `{available:false}` and the page
+  shows "Browser not running"; the shared browser self-heals (each request re-spawns it).
+- The Files page (`/files.html`) previews Excel/CSV/TSV via SheetJS (table + Export CSV),
+  opens PDFs in the phone's built-in viewer, and shows images inline.
 
 ## Rules
 

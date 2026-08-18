@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0b0d12">
+<title>Browser — Cmd Remote</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.json">
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: rgba(255, 255, 255, 0.045);
+    --panel-solid: #13161d;
+    --border: rgba(255, 255, 255, 0.09);
+    --text: #f2f4f8;
+    --muted: #9aa3b5;
+    --violet: #8b5cf6;
+    --cyan: #06b6d4;
+    --grad: linear-gradient(135deg, #8b5cf6, #06b6d4);
+    --error: #ff6b81;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); }
+  body {
+    display: flex; flex-direction: column;
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    height: 100dvh;
+    overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .logo-mark {
+    width: 28px; height: 28px; border-radius: 9px;
+    background: var(--grad);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .logo-mark svg { width: 60%; height: 60%; }
+  header h1 { font-size: 14px; font-weight: 700; flex: 1; letter-spacing: -0.01em; }
+  header .navLink {
+    font-size: 18px; text-decoration: none; padding: 6px 8px; border-radius: 9px; color: var(--text);
+  }
+  header .navLink:active { background: rgba(255,255,255,.1); }
+
+  /* Tab strip */
+  #tabstrip {
+    display: flex; gap: 6px; align-items: center;
+    padding: 6px 10px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    flex-shrink: 0;
+    scrollbar-width: thin;
+  }
+  .btab {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: rgba(255,255,255,.04);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    touch-action: manipulation;
+  }
+  .btab.active {
+    background: linear-gradient(135deg, rgba(139,92,246,.25), rgba(6,182,212,.15));
+    border-color: rgba(139,92,246,.4);
+    color: var(--text);
+  }
+  #tabAddBtn {
+    flex-shrink: 0;
+    width: 28px; height: 28px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    background: none;
+    color: var(--muted);
+    font-size: 16px;
+    cursor: pointer;
+  }
+
+  /* Controls row */
+  #controls {
+    display: flex; gap: 6px; align-items: center;
+    padding: 8px 10px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  #controls input {
+    flex: 1;
+    min-width: 140px;
+    background: rgba(255,255,255,.06);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 13px;
+    padding: 9px 12px;
+    outline: none;
+    font-family: inherit;
+  }
+  #controls input:focus { border-color: rgba(139,92,246,.55); }
+  #controls button {
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,.06);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 9px 13px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+    flex-shrink: 0;
+  }
+  #controls button:active { background: rgba(139,92,246,.25); }
+  #controls button.latched { background: var(--grad); border-color: transparent; }
+  #liveBtn.live { background: linear-gradient(135deg, #ff6b81, #f59e0b); border-color: transparent; }
+
+  /* Screenshot view */
+  #stage {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    position: relative;
+    background: #000;
+    -webkit-overflow-scrolling: touch;
+  }
+  #shot {
+    display: block;
+    width: 100%;
+    height: auto;
+    image-rendering: auto;
+    touch-action: manipulation;
+  }
+  #status {
+    position: absolute;
+    top: 10px; left: 50%;
+    transform: translateX(-50%);
+    background: rgba(19,22,29,.92);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    pointer-events: none;
+    z-index: 5;
+  }
+  #tip {
+    position: absolute;
+    bottom: 10px; left: 50%;
+    transform: translateX(-50%);
+    background: rgba(19,22,29,.92);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    padding: 5px 12px;
+    border-radius: 20px;
+    pointer-events: none;
+    z-index: 5;
+    white-space: nowrap;
+  }
+  #typeRow {
+    display: none;
+    gap: 6px;
+    padding: 8px 10px;
+    flex-shrink: 0;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+  }
+  #typeRow input {
+    flex: 1;
+    background: rgba(255,255,255,.06);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 14px;
+    padding: 10px 12px;
+    outline: none;
+  }
+  #typeRow button {
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,.06);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo-mark"><svg viewBox="0 0 64 64" fill="none"><path d="M20 24 L37 32 L20 40" stroke="#fff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M25 44 h15" stroke="#fff" stroke-width="6.5" stroke-linecap="round"/></svg></div>
+  <h1>Browser</h1>
+  <a href="/index.html" class="navLink" title="Chat">💬</a>
+  <a href="/files.html" class="navLink" title="Files">📁</a>
+</header>
+
+<div id="tabstrip"></div>
+<div id="controls">
+  <input id="urlInput" placeholder="Enter URL…" autocomplete="off">
+  <button id="goBtn">Go</button>
+  <button id="backBtn">←</button>
+  <button id="fwdBtn">→</button>
+  <button id="reloadBtn">⟳</button>
+  <button id="typeBtn">⌨ Type</button>
+  <button id="liveBtn" class="live">● LIVE</button>
+</div>
+<div id="stage">
+  <img id="shot" alt="browser view">
+  <div id="status">connecting…</div>
+  <div id="tip">Tap the page to click · drag to scroll</div>
+</div>
+<div id="typeRow">
+  <input id="typeInput" placeholder="Type into the browser page…" autocomplete="off">
+  <button id="typeSend">Send</button>
+</div>
+
+<script>
+(function () {
+  const token = new URLSearchParams(location.search).get('token') || localStorage.getItem('cmd_remote_token') || '';
+  const auth = token ? { 'Authorization': 'Bearer ' + token } : {};
+  const $ = (id) => document.getElementById(id);
+  const shot = $('shot'), statusEl = $('status'), tabstrip = $('tabstrip');
+  const urlInput = $('urlInput'), liveBtn = $('liveBtn'), typeRow = $('typeRow');
+
+  let tabs = [];
+  let activeTab = null;
+  let live = true;
+  let refreshTimer = null;
+  let stageScroll = { top: 0, left: 0 };
+
+  const stage = $('stage');
+
+  async function api(url, opts) {
+    const r = await fetch(url, { headers: auth, ...opts });
+    if (r.status === 401) throw new Error('Unauthorized');
+    return r;
+  }
+  async function post(url, body) {
+    const r = await api(url, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return r.json();
+  }
+
+  function setStatus(text) {
+    statusEl.textContent = text;
+  }
+
+  async function refreshTabs() {
+    try {
+      const r = await api('/api/browser/tabs');
+      const j = await r.json();
+      if (!j.available) { setStatus('Browser not running'); return; }
+      tabs = j.tabs || [];
+      if (tabs.length && !tabs.some((t) => t.id === activeTab)) {
+        activeTab = tabs[0].id;
+      }
+      renderTabs();
+    } catch (e) { setStatus('Browser unreachable'); }
+  }
+
+  function renderTabs() {
+    tabstrip.innerHTML = '';
+    for (const t of tabs) {
+      const el = document.createElement('button');
+      el.className = 'btab' + (t.id === activeTab ? ' active' : '');
+      el.textContent = t.title || t.url || 'tab';
+      el.addEventListener('click', () => { activeTab = t.id; refreshShot(); refreshTabs(); });
+      tabstrip.appendChild(el);
+    }
+    const add = document.createElement('button');
+    add.id = 'tabAddBtn';
+    add.textContent = '+';
+    add.addEventListener('click', async () => {
+      const j = await post('/api/browser/newtab', {});
+      if (j.ok) { activeTab = j.id; refreshTabs(); refreshShot(); }
+    });
+    tabstrip.appendChild(add);
+  }
+
+  async function refreshShot() {
+    if (!activeTab) { setStatus('No tab selected'); return; }
+    // Preserve the user's scroll position across screenshot refreshes so the
+    // view doesn't jump back to the top on every live update.
+    stageScroll = { top: stage.scrollTop, left: stage.scrollLeft };
+    try {
+      const r = await api('/api/browser/screenshot?tab=' + encodeURIComponent(activeTab));
+      if (!r.ok) { setStatus('Screenshot failed'); return; }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const old = shot.src;
+      shot.src = url;
+      if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
+      stage.scrollTop = stageScroll.top;
+      stage.scrollLeft = stageScroll.left;
+      setStatus('live');
+    } catch { setStatus('Screenshot error'); }
+  }
+
+  function toggleLive() {
+    live = !live;
+    liveBtn.classList.toggle('live', live);
+    liveBtn.textContent = live ? '● LIVE' : '⏸ paused';
+    clearInterval(refreshTimer);
+    if (live) {
+      refreshShot();
+      refreshTimer = setInterval(refreshShot, 1500);
+    }
+  }
+
+  // Tap-to-click: send click at screenshot coords.
+  shot.addEventListener('click', async (e) => {
+    if (!activeTab) return;
+    const rect = shot.getBoundingClientRect();
+    const scaleX = shot.naturalWidth ? shot.naturalWidth / rect.width : 1;
+    const scaleY = shot.naturalHeight ? shot.naturalHeight / rect.height : 1;
+    const x = Math.round((e.clientX - rect.left) * scaleX);
+    const y = Math.round((e.clientY - rect.top) * scaleY);
+    await post('/api/browser/click', { tab: activeTab, x, y });
+    if (live) refreshShot();
+  });
+
+  $('goBtn').addEventListener('click', async () => {
+    let u = urlInput.value.trim();
+    if (!u) return;
+    if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+    await post('/api/browser/navigate', { tab: activeTab, url: u });
+    if (live) setTimeout(refreshShot, 1200);
+  });
+  urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('goBtn').click(); });
+
+  $('backBtn').addEventListener('click', async () => {
+    await post('/api/browser/eval', { tab: activeTab, expression: 'history.back(); "ok"' });
+    if (live) setTimeout(refreshShot, 1000);
+  });
+  $('fwdBtn').addEventListener('click', async () => {
+    await post('/api/browser/eval', { tab: activeTab, expression: 'history.forward(); "ok"' });
+    if (live) setTimeout(refreshShot, 1000);
+  });
+  $('reloadBtn').addEventListener('click', async () => {
+    await post('/api/browser/eval', { tab: activeTab, expression: 'location.reload(); "ok"' });
+    if (live) setTimeout(refreshShot, 1200);
+  });
+
+  $('typeBtn').addEventListener('click', () => {
+    typeRow.style.display = typeRow.style.display === 'flex' ? 'none' : 'flex';
+    if (typeRow.style.display === 'flex') $('typeInput').focus();
+  });
+  $('typeSend').addEventListener('click', async () => {
+    const text = $('typeInput').value;
+    if (!text) return;
+    await post('/api/browser/type', { tab: activeTab, text });
+    $('typeInput').value = '';
+    if (live) refreshShot();
+  });
+  $('typeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('typeSend').click(); });
+
+  liveBtn.addEventListener('click', toggleLive);
+
+  // Boot
+  (async () => {
+    await refreshTabs();
+    if (activeTab) { refreshShot(); refreshTimer = setInterval(refreshShot, 1500); }
+    else setStatus('No browser tabs — the agent may open one');
+  })();
+})();
+</script>
+</body>
+</html>

@@ -16,4 +16,7 @@ CmdRemoteApp.exe
 
 # Generated verification output
 verify-results.txt
+
+# Playwright MCP dump dir
+.playwright-mcp/
 commit-msg.txt  

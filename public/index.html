@@ -409,6 +409,7 @@
     <div class="logo-mark"><svg viewBox="0 0 64 64" fill="none"><path d="M20 24 L37 32 L20 40" stroke="#fff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M25 44 h15" stroke="#fff" stroke-width="6.5" stroke-linecap="round"/></svg></div>
     <h2 id="chatTitle">New chat</h2>
     <a href="/files.html" class="navLink" title="Browse files">📁</a>
+    <a href="/browser.html" class="navLink" title="Live browser">🌐</a>
     <div class="status"><span class="dot" id="dot"></span><span id="statusText">connecting</span></div>
   </header>
   <div id="messages"></div>
@@ -493,6 +494,18 @@
 
   function showLogin() { login.style.display = 'flex'; }
   function hideLogin() { login.style.display = 'none'; }
+
+  // Nav links (Files/Browser) need the token in the URL to authenticate.
+  function tokenizeNavLinks() {
+    const t = token();
+    if (!t) return;
+    for (const a of document.querySelectorAll('header .navLink')) {
+      const href = a.getAttribute('href');
+      if (href && href.startsWith('/') && !href.includes('token=')) {
+        a.setAttribute('href', href + '?token=' + encodeURIComponent(t));
+      }
+    }
+  }
 
   // --- Connection ---
   function connect() {
@@ -862,6 +875,7 @@
 
   // --- Boot: token gate, then connect ---
   async function boot() {
+    tokenizeNavLinks();
     if (!hasToken()) {
       showLogin();
       loginBtn.onclick = () => {

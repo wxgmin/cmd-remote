@@ -157,6 +157,52 @@
     border-radius: var(--radius);
     border: 1px solid var(--border);
   }
+  /* Excel/CSV table */
+  .tableWrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(255,255,255,.03);
+  }
+  .tableWrap table {
+    border-collapse: collapse;
+    font-size: 12.5px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    min-width: 100%;
+  }
+  .tableWrap th, .tableWrap td {
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    white-space: nowrap;
+    text-align: left;
+    color: var(--text);
+  }
+  .tableWrap th {
+    background: rgba(139,92,246,.15);
+    font-weight: 650;
+    position: sticky;
+    top: 0;
+  }
+  .fileActions {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    margin: 10px 0;
+  }
+  .fileActions a, .fileActions button {
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,.06);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 9px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    touch-action: manipulation;
+  }
+  .fileActions a:active, .fileActions button:active { background: rgba(139,92,246,.25); }
   #viewer .bin {
     padding: 30px;
     text-align: center;
@@ -184,6 +230,7 @@
 <div id="list"></div>
 <div id="viewer" class="hidden"></div>
 
+<script src="/vendor/xlsx.full.min.js"></script>
 <script>
 (function () {
   const listEl = document.getElementById('list');
@@ -197,6 +244,7 @@
   let roots = [];
   let stack = []; // directory navigation stack (absolute paths)
   let searchBox = null;
+  let listScroll = 0; // preserve scroll position across re-renders
 
   function fmtSize(n) {
     if (!n && n !== 0) return '';
@@ -255,6 +303,7 @@
   async function loadDir(absPath) {
     showList();
     pathbarEl.textContent = absPath;
+    listScroll = listEl.scrollTop; // remember where the user was
     listEl.innerHTML = '<div id="msg">Loading…</div>';
     try {
       const r = await api('/api/fs/list?path=' + encodeURIComponent(absPath));
@@ -284,6 +333,9 @@
         listEl.appendChild(el);
       }
       if (!j.entries.length) listEl.innerHTML = '<div id="msg">Empty folder</div>';
+      // Restore scroll position (a fresh directory starts at the top).
+      if (absPath !== stack[stack.length - 1]) listEl.scrollTop = 0;
+      else listEl.scrollTop = listScroll;
       // Vault search box (only when inside the vault root)
       if (absPath === (roots.find((r) => r.includes('Obsidian')) || '')) addSearchBox();
     } catch (err) {
@@ -327,6 +379,9 @@
   async function viewFile(absPath) {
     showViewer();
     viewerEl.innerHTML = '<div id="msg">Loading…</div>';
+    const ext = (absPath.split('.').pop() || '').toLowerCase();
+    const isXlsx = ['xlsx', 'xls', 'csv', 'tsv'].includes(ext);
+    const isPdf = ext === 'pdf';
     try {
       const r = await api('/api/fs/file?path=' + encodeURIComponent(absPath));
       if (!r.ok) {
@@ -336,6 +391,53 @@
       }
       const ct = r.headers.get('Content-Type') || '';
       const name = absPath.split('/').pop();
+      const downloadUrl = '/api/fs/file?path=' + encodeURIComponent(absPath) + (token ? '&token=' + encodeURIComponent(token) : '');
+
+      // Excel / CSV / TSV: parse with SheetJS and render a table.
+      if (isXlsx && window.XLSX) {
+        const buf = await r.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        if (ws) {
+          const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+          let html = '<div class="fileActions">';
+          html += '<a href="' + downloadUrl + '" download="' + name + '">⬇ Download ' + ext.toUpperCase() + '</a>';
+          // Export as CSV (opens in Google Sheets / Excel / Numbers anywhere).
+          const csv = XLSX.utils.sheet_to_csv(ws);
+          html += '<button id="csvBtn">⬇ Export CSV (for Google Sheets)</button>';
+          html += '<button id="copyBtn">📋 Copy CSV</button>';
+          html += '</div><div class="tableWrap"><table>';
+          rows.forEach((row, i) => {
+            html += '<tr>';
+            row.forEach((cell) => {
+              const tag = i === 0 ? 'th' : 'td';
+              html += '<' + tag + '>' + String(cell).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</' + tag + '>';
+            });
+            html += '</tr>';
+          });
+          html += '</table></div>';
+          if (!rows.length) html += '<div id="msg">Empty sheet</div>';
+          viewerEl.innerHTML = '<div style="margin-bottom:10px;color:var(--muted);font-size:12px">' + name + '</div>' + html;
+          const csvBlob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+          const csvUrl = URL.createObjectURL(csvBlob);
+          document.getElementById('csvBtn').addEventListener('click', () => {
+            const a = document.createElement('a');
+            a.href = csvUrl;
+            a.download = name.replace(/\.(xlsx|xls|csv|tsv)$/i, '') + '.csv';
+            a.click();
+          });
+          document.getElementById('copyBtn').addEventListener('click', async () => {
+            try { await navigator.clipboard.writeText(csv); alert('CSV copied — paste into Google Sheets'); }
+            catch { prompt('Copy this CSV (or use the Export button):', csv.slice(0, 4000)); }
+          });
+          return;
+        }
+      }
+      // PDF: open in the phone's native viewer.
+      if (isPdf) {
+        viewerEl.innerHTML = '<div style="margin-bottom:10px;color:var(--muted);font-size:12px">' + name + '</div><div class="fileActions"><a href="' + downloadUrl + '" target="_blank">📄 Open PDF (new tab)</a><a href="' + downloadUrl + '" download="' + name + '">⬇ Download</a></div><div id="msg">PDFs open in your browser\'s built-in viewer.</div>';
+        return;
+      }
       if (ct.startsWith('image/')) {
         const blob = await r.blob();
         const url = URL.createObjectURL(blob);
