@@ -1,8 +1,8 @@
 // Service worker: cache static assets for PWA installability.
 // Never cache HTML or auth-gated pages. Always network-first for those.
-const CACHE = 'cmd-remote-v2';
+const CACHE = 'cmd-remote-v3';
 // Immutable-ish static assets only (no HTML, no API).
-const SHELL = ['/manifest.json', '/icon.svg', '/icon-192.png', '/icon-512.png', '/xterm.css', '/xterm.js', '/fit.js'];
+const SHELL = ['/manifest.json', '/icon.svg', '/icon-192.png', '/icon-512.png', '/xterm.css', '/xterm.js', '/fit.js', '/scrollbar.js'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

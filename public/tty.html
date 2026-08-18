@@ -23,7 +23,7 @@
     --error: #ff6b81;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; background: var(--bg); }
+  html, body { height: 100%; height: 100dvh; background: var(--bg); }
   body {
     display: flex; flex-direction: column;
     color: var(--text);
@@ -89,8 +89,16 @@
   .xterm .xterm-viewport { scrollbar-width: thin; }
   .xterm .xterm-viewport::-webkit-scrollbar { width: 5px; }
   .xterm .xterm-viewport::-webkit-scrollbar-thumb { background: rgba(139,92,246,.4); border-radius: 3px; }
-  /* Pause output button state */
-  #kPause.latched { background: linear-gradient(135deg, #ff6b81, #f59e0b); border-color: transparent; color: #fff; }
+  /* THE critical rule for mobile: swiping the terminal content must scroll
+     the viewport like a browser. Without touch-action on the viewport
+     itself, Android WebView treats swipes as custom gestures and only the
+     side scrollbar works. */
+  .xterm .xterm-viewport {
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  /* Pause output button state (removed — output always streams) */
   /* Tab bar */
   #tabbar {
     display: flex;
@@ -246,7 +254,6 @@
   <span class="sep"></span>
   <button id="kEnter" title="Enter">↵</button>
   <span class="sep"></span>
-  <button id="kPause" title="Pause output (stop the flood so you can read)">⏸</button>
   <button id="kbBtn" title="Show / hide keyboard">⌨</button>
   <button id="kbLock" title="Lock keyboard: never auto-open">🔒</button>
 </div>
@@ -338,40 +345,11 @@
   // changes) — update() on every scroll/write keeps the thumb accurate.
   viewport.addEventListener('scroll', updateScrollbar, { passive: true });
 
-  // ---- Pause output: buffer incoming writes while ON so the user can
-  // read; resume flushes the buffer. Auto-engages when scrolling up. ----
-  const pauseBtn = document.getElementById('kPause');
-  let paused = false;
-  let pauseBuf = '';
-  let pauseFlushTimer = null;
-  // rAF-coalesced output writes (declared here; used in onmessage).
+  // rAF-coalesced output writes (used in onmessage): batch chunks into one
+  // write per frame so streaming output stays smooth.
   const origWrite = term.write.bind(term);
   let writeQueue = '';
   let writeRaf = null;
-  function setPaused(v) {
-    paused = v;
-    pauseBtn.classList.toggle('latched', paused);
-    pauseBtn.textContent = paused ? '⏸ ' + Math.ceil(pauseBuf.length / 1024) + 'K' : '⏸';
-    if (!paused) {
-      // Flush buffered output in one go.
-      const data = pauseBuf;
-      pauseBuf = '';
-      if (data) { origWrite(data); if (stickToBottom) scrollToLatest(); }
-      clearTimeout(pauseFlushTimer);
-      pauseFlushTimer = null;
-    }
-  }
-  pauseBtn.addEventListener('click', () => setPaused(!paused));
-  // Auto-pause: while output is streaming, scrolling up (away from the
-  // bottom) pauses output so the flood can't yank the view around.
-  let outgoingSinceScroll = false;
-  viewport.addEventListener('scroll', () => {
-    updateScrollbar();
-    if (!paused && !atBottom() && outgoingSinceScroll) {
-      setPaused(true);
-      outgoingSinceScroll = false;
-    }
-  }, { passive: true });
 
   scrollHint.addEventListener('click', () => { stickToBottom = true; scrollToLatest(); refreshScrollHint(); });
 
@@ -647,17 +625,10 @@
         if (msg.replay) {
           const wasAtBottom = atBottom();
           if (wasAtBottom) { term.reset(); stickToBottom = true; }
-          else setPaused(true); // flood protection while reading
+          // Not at the bottom: leave the view alone; output keeps streaming
+          // into the buffer and the user can scroll at their own pace.
         }
       } else if (msg.type === 'output') {
-        if (paused) {
-          // Buffer while paused; show live K-badge.
-          pauseBuf += msg.data;
-          pauseBtn.textContent = '⏸ ' + Math.ceil(pauseBuf.length / 1024) + 'K';
-          if (!pauseFlushTimer) pauseFlushTimer = setTimeout(() => setPaused(true), 500); // refresh badge
-          return;
-        }
-        outgoingSinceScroll = true;
         // rAF-coalesced writes: batch chunks into one write per frame.
         writeQueue += msg.data;
         if (!writeRaf) {
@@ -729,13 +700,24 @@
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
   });
 
-  window.addEventListener('resize', () => {
-    fit.fit();
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-    }
-    refreshScrollHint();
-  });
+  // Re-fit the terminal whenever the viewport changes — including Android
+  // keyboard show/hide, which window.resize alone does not reliably fire.
+  // visualViewport is the reliable signal on mobile WebViews.
+  let refitRaf = null;
+  function refit() {
+    if (refitRaf) return;
+    refitRaf = requestAnimationFrame(() => {
+      refitRaf = null;
+      fit.fit();
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+      refreshScrollHint();
+      updateScrollbar();
+    });
+  }
+  window.addEventListener('resize', refit);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', refit);
 
   // Tap to focus WITHOUT popping the keyboard on mobile (a real tap only
   // moves focus to xterm; the IME stays closed until ⌨ is tapped). Swipes
